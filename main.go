@@ -8,9 +8,5 @@ func main() {
 	x = "bye"
 	fmt.Println("hello -2")
 	x = "222"
-	fmt.Pzzrintln("hello -3")
-	x = "555"
-	bla
-
 	fmt.Println(x)
 }
