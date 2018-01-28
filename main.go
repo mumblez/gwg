@@ -19,7 +19,7 @@ func init() {
 	// log.SetFormatter(&log.JSONFormatter{})
 	log.SetFormatter(&log.TextFormatter{FullTimestamp: true})
 
-	// Output to stdout instexxxad of the default stderr
+	// Output to stdout instead of the default stderr
 	// Can be any io.Writer, see below for File example
 	log.SetOutput(os.Stdout)
 
@@ -258,7 +258,7 @@ func main() {
 	// hot reloading can be improved, (adding mutexes might be overkill for now)
 	viper.WatchConfig()
 	viper.OnConfigChange(func(e fsnotify.Event) {
-		log.Info("Config file changed:", e.Name)
+		log.Warn("Config file changed: ", e.Name)
 
 		// update core config
 		if viper.IsSet("user") {
@@ -308,6 +308,7 @@ func main() {
 		// viper.Unmarshal(&C)
 		// old fields remain if commented out!
 		// have to rebuild or blank out existing values
+		log.Warn("Configuration updated")
 	})
 
 	// listen and port changes require a restart
