@@ -7,16 +7,18 @@ group: gwg
 repos:
   # required
   - url: git@github.com:ns/repo-1.git
-    path: /ghwha
+    path: /ghwh
     directory: /path/to/clone/to
+    #branch: masteraa
     # optional
     trigger: /path/to/trigger/file-a
     secret: superSecret-repo-1
     sshPrivKey: /path/to/priv/key
     sshPassPhrase: superPassPhrase-1
   - url: git@github.com:ns/repo-2.git
-    path: /ghwh
+    path: /ghwha
     directory: /path/to/clone/to-2
+    branch: master
     trigger: /path/to/trigger/file-2
     secret: superSecret-repo-2
     sshPrivKey: /path/to/priv/key-2

@@ -2,15 +2,18 @@ package main
 
 import (
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	"os"
 	"strings"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/google/go-github/github"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 	"gopkg.in/src-d/go-git.v4"
 	"gopkg.in/src-d/go-git.v4/plumbing"
+	"gopkg.in/src-d/go-git.v4/plumbing/transport/ssh"
 )
 
 func init() {
@@ -38,6 +41,7 @@ type repo struct {
 	URL           string `mapstructure:"url"`
 	Path          string `mapstructure:"path"`
 	Directory     string `mapstructure:"directory"`
+	Branch        string `mapstructure:"branch"`
 	Secret        string `mapstructure:"secret"`
 	SSHPrivKey    string `mapstructure:"sshPrivKey"`
 	SSHPassPhrase string `mapstructure:"sshPassPhrase"`
@@ -48,9 +52,9 @@ type repo struct {
 var C config
 
 func (c *config) FindRepo(path string) (int, bool) {
-	for k, repo := range c.Repos {
+	for r, repo := range c.Repos {
 		if repo.Path == cleanURL(path) {
-			return k, true
+			return r, true
 		}
 	}
 	return 0, false
@@ -64,21 +68,127 @@ func cleanURL(url string) string {
 	return url
 }
 
-func (r *repo) Update() {
-	repoLog := log.WithFields(log.Fields{
+func (r *repo) clone() {
+	rlog := log.WithFields(log.Fields{
 		"repo": r.Name(),
 		"path": r.Path,
 	})
-	repoLog.Info("Starting update...")
-	fmt.Printf("Url = %+v\nPath = %v\nDirectory = %v\nSecret = %v\nSSH Private Key = %v\n", r.URL, r.Path, r.Directory, r.Secret, r.SSHPrivKey)
-	if r.HasSSHPassphrase() {
-		fmt.Printf("SSHPassPhrase = %+v\n", r.SSHPassPhrase)
+	sshAuth, err := ssh.NewPublicKeysFromFile("git", r.SSHPrivKey, r.SSHPassPhrase)
+	if err != nil {
+		rlog.Errorf("Failed to setup ssh auth: %v\n", err)
+		return
 	}
 
-	fmt.Printf("Trigger = %+v\n", r.Trigger)
-	fmt.Println(r.Name())
-	fmt.Println("=========================")
+	fmt.Println("Initial clone of repository...")
+	_, err = git.PlainClone(r.Directory, false, &git.CloneOptions{
+		URL:           r.URL,
+		ReferenceName: plumbing.ReferenceName("refs/heads/" + r.Branch),
+		SingleBranch:  true,
+		Auth:          sshAuth,
+	})
+	if err != nil {
+		rlog.Errorf("Failed to clone repository: %v\n", err)
+	}
 }
+
+func (r *repo) update() {
+	rlog := log.WithFields(log.Fields{
+		"repo": r.Name(),
+		"path": r.Path,
+	})
+	sshAuth, err := ssh.NewPublicKeysFromFile("git", r.SSHPrivKey, r.SSHPassPhrase)
+	if err != nil {
+		rlog.Errorf("Failed to setup ssh auth: %v\n", err)
+		return
+	}
+
+	repo, err := git.PlainOpen(r.Directory)
+	if err != nil {
+		rlog.Errorf("Failed to open local git repository: %v\n", err)
+		return
+	}
+
+	w, err := repo.Worktree()
+	if err != nil {
+		rlog.Errorf("Failed to open work tree for repository: %v\n", err)
+		return
+	}
+
+	err = repo.Fetch(&git.FetchOptions{
+		RemoteName: "origin",
+		Auth:       sshAuth,
+	})
+	if err == git.NoErrAlreadyUpToDate {
+		rlog.Info("No new commits")
+		return
+	}
+	if err != nil {
+		rlog.Errorf("Failed to fetch updates: %v\n", err)
+		return
+	}
+	rlog.Info("Fetched new updates")
+
+	// Get local and remote refs to compare hashes before we proceed
+	remoteRef, err := repo.Reference(plumbing.ReferenceName("refs/remotes/origin/"+r.Branch), true)
+	if err != nil {
+		rlog.Errorf("Failed to get remote reference for remotes/origin/%s: %v\n", r.Branch, err)
+		return
+	}
+	localRef, err := repo.Reference(plumbing.ReferenceName("HEAD"), true)
+	if err != nil {
+		rlog.Errorf("Failed to get local reference for HEAD: %v\n", err)
+		return
+	}
+
+	if remoteRef.Hash() == localRef.Hash() {
+		rlog.Warning("Already up to date")
+		return
+	}
+
+	// git reset --hard [origin/master|hash]
+	err = w.Reset(&git.ResetOptions{Mode: git.HardReset, Commit: remoteRef.Hash()})
+	if err != nil {
+		rlog.Errorf("Failed to hard reset work tree: %v\n", err)
+		return
+	}
+	rlog.Info("Work tree up to date")
+
+	// confirm changes
+	rlog.Info("Confirming changes....")
+	headRef, err := repo.Reference(plumbing.ReferenceName("HEAD"), true)
+	if err != nil {
+		rlog.Errorf("Failed to get local HEAD reference: %v\n", err)
+		return
+	}
+
+	if headRef.Hash() == remoteRef.Hash() {
+		rlog.Infof("Successfully updated local repository, latest hash: %v\n", headRef.Hash())
+	} else {
+		rlog.Error("Something went wrong, hashes don't match!")
+	}
+}
+
+// func (r *repo) Update() {
+// repoLog := log.WithFields(log.Fields{
+// 	"repo": r.Name(),
+// 	"path": r.Path,
+// })
+
+// initial clone if directory doesn't exist
+// else update
+
+// repoLog.Info("Starting update...")
+// fmt.Printf("Url = %+v\nPath = %v\nDirectory = %v\nSecret = %v\nSSH Private Key = %v\n", r.URL, r.Path, r.Directory, r.Secret, r.SSHPrivKey)
+// if r.HasSSHPassphrase() {
+// 	fmt.Printf("SSHPassPhrase = %+v\n", r.SSHPassPhrase)
+// }
+//
+// fmt.Printf("Trigger = %+v\n", r.Trigger)
+// fmt.Printf("Branch = %+v\n", r.Branch)
+// fmt.Println(r.Name())
+// fmt.Println("=========================")
+
+// }
 
 // short name for the logs
 func (r *repo) Name() string {
@@ -121,9 +231,56 @@ func (r *repo) HasSSHPassphrase() bool {
 }
 
 func handler(w http.ResponseWriter, r *http.Request) {
+	payload, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		log.Errorf("Error reading request body: %v\n", err)
+		return
+	}
+	defer r.Body.Close()
+
+	event, err := github.ParseWebHook(github.WebHookType(r), payload)
+	if err != nil {
+		log.Errorf("Could not parse webhook: %v\n", err)
+		return
+	}
+
+	// find the repo, get the secret and validate payload
+
+	fmt.Printf("event = %+v\n", event)
+	return
+
+	// payloadx, err := github.ValidatePayload(r, []byte("my-secret-key"))
+	// if err != nil {
+	// 	log.Printf("error validating request body: err=%s\n", err)
+	// 	return
+	// }
+
+	switch e := event.(type) {
+	case *github.PushEvent:
+		fmt.Printf("Hello %v\n", e)
+		// this is a commit push, do something with it
+	// case *github.PullRequestEvent:
+	// 	// this is a pull request, do something with it
+	// case *github.WatchEvent:
+	// 	// https://developer.github.com/v3/activity/events/types/#watchevent
+	// 	// someone starred our repository
+	// 	if e.Action != nil && *e.Action == "starred" {
+	// 		fmt.Printf("%s starred repository %s\n",
+	// 			*e.Sender.Login, *e.Repo.FullName)
+	// 	}
+	default:
+		log.Warnf("Unknown event type %v\n", github.WebHookType(r))
+		return
+	}
+
 	if idx, ok := C.FindRepo(r.URL.Path); ok {
 		// TODO: add semaphore and locks
-		go C.Repos[idx].Update()
+
+		if _, err := os.Stat(C.Repos[idx].Directory); err != nil {
+			go C.Repos[idx].update()
+		} else {
+			go C.Repos[idx].clone()
+		}
 	} else {
 		log.Warnf("Repository not found for path: %v\n", r.URL.Path)
 	}
@@ -163,11 +320,9 @@ func main() {
 		// commented out
 		var newRepos []repo
 		repos := viper.Get("repos")
-		fmt.Printf("repo trigger (viper) = %+v\n", repos)
 		for _, v := range repos.([]interface{}) {
 			var newRepo repo
 			for a, b := range v.(map[interface{}]interface{}) {
-				// fmt.Printf("a = %+s, b= %+s\n", a, b)
 				switch a {
 				case "url":
 					newRepo.URL = b.(string)
@@ -175,6 +330,8 @@ func main() {
 					newRepo.Path = b.(string)
 				case "directory":
 					newRepo.Directory = b.(string)
+				case "branch":
+					newRepo.Branch = b.(string)
 				case "trigger":
 					newRepo.Trigger = b.(string)
 				case "secret":
@@ -184,6 +341,10 @@ func main() {
 				case "sshPassPhrase":
 					newRepo.SSHPassPhrase = b.(string)
 				}
+			}
+			// defaults
+			if newRepo.Branch == "" {
+				newRepo.Branch = "master"
 			}
 			newRepos = append(newRepos, newRepo)
 		}
@@ -196,105 +357,5 @@ func main() {
 	// listen and port changes require a restart
 	http.HandleFunc("/", handler)
 	http.ListenAndServe(C.Listen+":"+C.Port, nil)
-
-	// name := C.Name
-	// fmt.Println("name: ", name)
-	// repos := C.Repos
-	// fmt.Printf("repo 1: %+v\n", repos)
-	// urlpath := "/ghwh/diff/path"
-	// idx, ok := findRepoIndex(urlpath)
-	// if !ok {
-	// 	log.Warnf("Could not find repo for path: %s", urlpath)
-	// 	return
-	// }
-	// fmt.Printf("idx = %+v\n", idx)
-
-	// os.Exit(0)
-
-	// TODO
-	// - break out into function
-	// pass in path (repo dir), ssh priv key location
-	// - create ssh auth connection
-	repoLog := log.WithFields(log.Fields{
-		"Repo": "mainRepo",
-	})
-
-	path := os.Args[1]
-	_, err := os.Stat(path)
-	if os.IsNotExist(err) {
-		repoLog.Errorf("path %+v does not exist!\n", path)
-		return
-	}
-
-	// We instance a new repository targeting the given path (the .git folder)
-	r, err := git.PlainOpen(path)
-	if err != nil {
-		repoLog.Error("Failed to open local git repository")
-		return
-	}
-
-	w, err := r.Worktree()
-	if err != nil {
-		repoLog.Errorf("Failed to open work tree for repository: %v\n", err)
-		return
-	}
-
-	repoLog.Info("Fetching...")
-	err = r.Fetch(&git.FetchOptions{RemoteName: "origin"})
-	if err == git.NoErrAlreadyUpToDate {
-		repoLog.Info("No new commits")
-		return
-	}
-	if err != nil {
-		repoLog.Errorf("Failed to fetch updates: %v\n", err)
-		return
-	}
-
-	// Get local and remote refs to compare hashes before we proceed
-	remoteRef, err := r.Reference(plumbing.ReferenceName("refs/remotes/origin/master"), true)
-	if err != nil {
-		repoLog.Errorf("Failed to get remote reference for remotes/origin/master: %v\n", err)
-		return
-	}
-	localRef, err := r.Reference(plumbing.ReferenceName("HEAD"), true)
-	if err != nil {
-		repoLog.Errorf("Failed to get local reference for HEAD: %v\n", err)
-		return
-	}
-
-	if remoteRef.Hash() == localRef.Hash() {
-		repoLog.Warning("Already up to date")
-		return
-	}
-
-	// git reset --hard [origin/master|hash]
-	repoLog.Info("Resetting work tree....")
-	err = w.Reset(&git.ResetOptions{Mode: git.HardReset, Commit: remoteRef.Hash()})
-	if err != nil {
-		repoLog.Errorf("Failed to hard reset work tree: %v\n", err)
-		return
-	}
-
-	// confirm changes
-	repoLog.Info("Confirming changes....")
-	headRef, err := r.Reference(plumbing.ReferenceName("HEAD"), true)
-	if err != nil {
-		repoLog.Errorf("Failed to get local HEAD reference: %v\n", err)
-		return
-	}
-
-	if headRef.Hash() == remoteRef.Hash() {
-		repoLog.Infof("Successfully updated local repository, latest hash: %v\n", headRef.Hash())
-	} else {
-		repoLog.Error("Something went wrong, hashes don't match!")
-	}
-
-	// print latest commit
-	// commit, err := r.CommitObject(headRef.Hash())
-	// if err != nil {
-	// 	log.Warn("Failed to get local HEAD reference: %v\n", err)
-	// 	return
-	// }
-	// fmt.Println(commit)
 
 }
