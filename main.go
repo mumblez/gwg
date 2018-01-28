@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/google/go-github/github"
@@ -164,7 +165,18 @@ func (r *repo) update() {
 		rlog.Infof("Successfully updated local repository, latest hash: %v\n", headRef.Hash())
 	} else {
 		rlog.Error("Something went wrong, hashes don't match!")
+		return
 	}
+
+	if err := r.touchTrigger(); err != nil {
+		log.Errorf("Failed to update trigger file: %v\n")
+		return
+	}
+	log.Info("Successfully updated trigger file")
+}
+
+func (r *repo) touchTrigger() error {
+	return os.Chtimes(r.Trigger, time.Now(), time.Now())
 }
 
 // short name for the logs
@@ -215,11 +227,11 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	payload, err := github.ValidatePayload(r, []byte(C.Repos[idx].Secret))
+	defer r.Body.Close()
 	if err != nil {
 		log.Errorf("Error validating request body: %v\n", err)
 		return
 	}
-	defer r.Body.Close()
 
 	event, err := github.ParseWebHook(github.WebHookType(r), payload)
 	if err != nil {
