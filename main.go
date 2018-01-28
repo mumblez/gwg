@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"strings"
@@ -114,6 +113,7 @@ func (r *repo) update() {
 		return
 	}
 
+	// TODO: assume origin?
 	err = repo.Fetch(&git.FetchOptions{
 		RemoteName: "origin",
 		Auth:       sshAuth,
@@ -153,7 +153,6 @@ func (r *repo) update() {
 	}
 	rlog.Info("Work tree up to date")
 
-	// confirm changes
 	rlog.Info("Confirming changes....")
 	headRef, err := repo.Reference(plumbing.ReferenceName("HEAD"), true)
 	if err != nil {
@@ -167,28 +166,6 @@ func (r *repo) update() {
 		rlog.Error("Something went wrong, hashes don't match!")
 	}
 }
-
-// func (r *repo) Update() {
-// repoLog := log.WithFields(log.Fields{
-// 	"repo": r.Name(),
-// 	"path": r.Path,
-// })
-
-// initial clone if directory doesn't exist
-// else update
-
-// repoLog.Info("Starting update...")
-// fmt.Printf("Url = %+v\nPath = %v\nDirectory = %v\nSecret = %v\nSSH Private Key = %v\n", r.URL, r.Path, r.Directory, r.Secret, r.SSHPrivKey)
-// if r.HasSSHPassphrase() {
-// 	fmt.Printf("SSHPassPhrase = %+v\n", r.SSHPassPhrase)
-// }
-//
-// fmt.Printf("Trigger = %+v\n", r.Trigger)
-// fmt.Printf("Branch = %+v\n", r.Branch)
-// fmt.Println(r.Name())
-// fmt.Println("=========================")
-
-// }
 
 // short name for the logs
 func (r *repo) Name() string {
@@ -231,9 +208,15 @@ func (r *repo) HasSSHPassphrase() bool {
 }
 
 func handler(w http.ResponseWriter, r *http.Request) {
-	payload, err := ioutil.ReadAll(r.Body)
+	idx, ok := C.FindRepo(r.URL.Path)
+	if !ok {
+		log.Warnf("Repository not found for path: %v\n", r.URL.Path)
+		return
+	}
+
+	payload, err := github.ValidatePayload(r, []byte(C.Repos[idx].Secret))
 	if err != nil {
-		log.Errorf("Error reading request body: %v\n", err)
+		log.Errorf("Error validating request body: %v\n", err)
 		return
 	}
 	defer r.Body.Close()
@@ -244,49 +227,22 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// find the repo, get the secret and validate payload
-
-	fmt.Printf("event = %+v\n", event)
-	return
-
-	// payloadx, err := github.ValidatePayload(r, []byte("my-secret-key"))
-	// if err != nil {
-	// 	log.Printf("error validating request body: err=%s\n", err)
-	// 	return
-	// }
-
 	switch e := event.(type) {
 	case *github.PushEvent:
-		fmt.Printf("Hello %v\n", e)
-		// this is a commit push, do something with it
-	// case *github.PullRequestEvent:
-	// 	// this is a pull request, do something with it
-	// case *github.WatchEvent:
-	// 	// https://developer.github.com/v3/activity/events/types/#watchevent
-	// 	// someone starred our repository
-	// 	if e.Action != nil && *e.Action == "starred" {
-	// 		fmt.Printf("%s starred repository %s\n",
-	// 			*e.Sender.Login, *e.Repo.FullName)
-	// 	}
+		if C.Repos[idx].URL == *e.Repo.SSHURL {
+			if _, err := os.Stat(C.Repos[idx].Directory); err != nil {
+				go C.Repos[idx].update()
+			} else {
+				go C.Repos[idx].clone()
+			}
+		}
+		return
 	default:
 		log.Warnf("Unknown event type %v\n", github.WebHookType(r))
 		return
 	}
-
-	if idx, ok := C.FindRepo(r.URL.Path); ok {
-		// TODO: add semaphore and locks
-
-		if _, err := os.Stat(C.Repos[idx].Directory); err != nil {
-			go C.Repos[idx].update()
-		} else {
-			go C.Repos[idx].clone()
-		}
-	} else {
-		log.Warnf("Repository not found for path: %v\n", r.URL.Path)
-	}
 }
 
-// Pull changes from a remote repository
 func main() {
 	// setup config
 	viper.SetConfigName("config")
