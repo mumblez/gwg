@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"net/http"
 	"os"
 	"strings"
@@ -78,7 +77,6 @@ func (r *repo) clone() {
 		return
 	}
 
-	fmt.Println("Initial clone of repository...")
 	_, err = git.PlainClone(r.Directory, false, &git.CloneOptions{
 		URL:           r.URL,
 		ReferenceName: plumbing.ReferenceName("refs/heads/" + r.Branch),
@@ -87,7 +85,9 @@ func (r *repo) clone() {
 	})
 	if err != nil {
 		rlog.Errorf("Failed to clone repository: %v\n", err)
+		return
 	}
+	rlog.Info("Cloned repository")
 }
 
 func (r *repo) update() {
@@ -231,9 +231,9 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	case *github.PushEvent:
 		if C.Repos[idx].URL == *e.Repo.SSHURL {
 			if _, err := os.Stat(C.Repos[idx].Directory); err != nil {
-				go C.Repos[idx].update()
-			} else {
 				go C.Repos[idx].clone()
+			} else {
+				go C.Repos[idx].update()
 			}
 		}
 		return
