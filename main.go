@@ -89,8 +89,15 @@ func (r *repo) clone() {
 		return
 	}
 	rlog.Info("Cloned repository")
+
+	if err := r.touchTrigger(); err != nil {
+		log.Errorf("Failed to update trigger file: %v\n")
+		return
+	}
+	log.Info("Successfully updated trigger file")
 }
 
+// essentially git fetch and git reset --hard origin/master | latest remote commit
 func (r *repo) update() {
 	rlog := log.WithFields(log.Fields{
 		"repo": r.Name(),
