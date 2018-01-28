@@ -27,27 +27,29 @@ func init() {
 }
 
 type config struct {
-	Port  string `mapstructure:"port"`
-	User  string `mapstructure:"user"`
-	Group string `mapstructure:"group"`
-	Repos []repo
+	Listen string `mapstructure:"listen"`
+	Port   string `mapstructure:"port"`
+	User   string `mapstructure:"user"`
+	Group  string `mapstructure:"group"`
+	Repos  []repo
 }
 
 type repo struct {
-	Url           string `mapstructure:"url"`
+	URL           string `mapstructure:"url"`
 	Path          string `mapstructure:"path"`
 	Directory     string `mapstructure:"directory"`
 	Secret        string `mapstructure:"secret"`
-	SshPrivKey    string `mapstructure:"sshPrivKey"`
-	SshPassPhrase string `mapstructure:"sshPassPhrase"`
+	SSHPrivKey    string `mapstructure:"sshPrivKey"`
+	SSHPassPhrase string `mapstructure:"sshPassPhrase"`
+	Trigger       string `mapstructure:"trigger"`
 }
 
+// C is global config
 var C config
 
 func (c *config) FindRepo(path string) (int, bool) {
-	cleanPath := cleanURL(path)
 	for k, repo := range c.Repos {
-		if repo.Path == cleanPath {
+		if repo.Path == cleanURL(path) {
 			return k, true
 		}
 	}
@@ -63,48 +65,137 @@ func cleanURL(url string) string {
 }
 
 func (r *repo) Update() {
-	fmt.Printf("r.Url = %+v\n", r.Url)
+	repoLog := log.WithFields(log.Fields{
+		"repo": r.Name(),
+		"path": r.Path,
+	})
+	repoLog.Info("Starting update...")
+	fmt.Printf("Url = %+v\nPath = %v\nDirectory = %v\nSecret = %v\nSSH Private Key = %v\n", r.URL, r.Path, r.Directory, r.Secret, r.SSHPrivKey)
+	if r.HasSSHPassphrase() {
+		fmt.Printf("SSHPassPhrase = %+v\n", r.SSHPassPhrase)
+	}
+
+	fmt.Printf("Trigger = %+v\n", r.Trigger)
 	fmt.Println(r.Name())
+	fmt.Println("=========================")
 }
 
 // short name for the logs
 func (r *repo) Name() string {
-	name := strings.TrimPrefix(r.Url, "git@github.com:")
-	name = strings.TrimSuffix(name, ".git")
-	return name
+	return strings.TrimSuffix((strings.TrimPrefix(r.URL, "git@github.com:")), ".git")
+}
+
+func isEmpty(field string) bool {
+	if len(field) == 0 {
+		return true
+	}
+	return false
+}
+
+func (r *repo) HasTrigger() bool {
+	if isEmpty(r.Trigger) {
+		return false
+	}
+	return true
+}
+
+func (r *repo) HasSecret() bool {
+	if isEmpty(r.Secret) {
+		return false
+	}
+	return true
+}
+
+func (r *repo) HasSSHPrivKey() bool {
+	if isEmpty(r.SSHPrivKey) {
+		return false
+	}
+	return true
+}
+
+func (r *repo) HasSSHPassphrase() bool {
+	if isEmpty(r.SSHPassPhrase) {
+		return false
+	}
+	return true
 }
 
 func handler(w http.ResponseWriter, r *http.Request) {
-
 	if idx, ok := C.FindRepo(r.URL.Path); ok {
-		C.Repos[idx].Update()
+		// TODO: add semaphore and locks
+		go C.Repos[idx].Update()
+	} else {
+		log.Warnf("Repository not found for path: %v\n", r.URL.Path)
 	}
 }
 
 // Pull changes from a remote repository
 func main() {
 	// setup config
-
 	viper.SetConfigName("config")
 	viper.AddConfigPath("/etc/gwg")
 	viper.AddConfigPath(".")
-	err := viper.ReadInConfig() // Find and read the config file
-	if err != nil {
+	if err := viper.ReadInConfig(); err != nil {
 		log.Fatalf("Failed to read config file: %v\n", err)
 	}
-
 	if err := viper.Unmarshal(&C); err != nil {
-		log.Panicf("Failed to setup configuration: %v\n", err)
+		log.Fatalf("Failed to setup configuration: %v\n", err)
 	}
 
+	// hot reloading can be improved, (adding mutexes might be overkill for now)
 	viper.WatchConfig()
 	viper.OnConfigChange(func(e fsnotify.Event) {
-		fmt.Println("Config file changed:", e.Name)
-		viper.Unmarshal(&C)
+		log.Info("Config file changed:", e.Name)
+
+		// update core config
+		if viper.IsSet("user") {
+			C.User = viper.GetString("user")
+		} else {
+			C.User = ""
+		}
+		if viper.IsSet("group") {
+			C.Group = viper.GetString("group")
+		} else {
+			C.Group = ""
+		}
+
+		// update repo configs, we have to generate new repo configs incase old fields get removed or
+		// commented out
+		var newRepos []repo
+		repos := viper.Get("repos")
+		fmt.Printf("repo trigger (viper) = %+v\n", repos)
+		for _, v := range repos.([]interface{}) {
+			var newRepo repo
+			for a, b := range v.(map[interface{}]interface{}) {
+				// fmt.Printf("a = %+s, b= %+s\n", a, b)
+				switch a {
+				case "url":
+					newRepo.URL = b.(string)
+				case "path":
+					newRepo.Path = b.(string)
+				case "directory":
+					newRepo.Directory = b.(string)
+				case "trigger":
+					newRepo.Trigger = b.(string)
+				case "secret":
+					newRepo.Secret = b.(string)
+				case "sshPrivKey":
+					newRepo.SSHPrivKey = b.(string)
+				case "sshPassPhrase":
+					newRepo.SSHPassPhrase = b.(string)
+				}
+			}
+			newRepos = append(newRepos, newRepo)
+		}
+		C.Repos = newRepos
+		// viper.Unmarshal(&C)
+		// old fields remain if commented out!
+		// have to rebuild or blank out existing values
 	})
 
+	// listen and port changes require a restart
 	http.HandleFunc("/", handler)
-	http.ListenAndServe(":8080", nil)
+	http.ListenAndServe(C.Listen+":"+C.Port, nil)
 
 	// name := C.Name
 	// fmt.Println("name: ", name)
@@ -129,7 +220,7 @@ func main() {
 	})
 
 	path := os.Args[1]
-	_, err = os.Stat(path)
+	_, err := os.Stat(path)
 	if os.IsNotExist(err) {
 		repoLog.Errorf("path %+v does not exist!\n", path)
 		return
