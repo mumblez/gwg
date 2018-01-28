@@ -1,0 +1,16 @@
+port: 5555
+user: gwg
+group: gwg
+repos:
+  - url: git@github.com:ns/repo-1.git
+    path: /ghwha
+    secret: superSecret
+    directory: /path/to/clone/to
+    sshPrivKey: /path/to/priv/key
+    sshPassPhrase: superPassPhrase
+  - url: git@github.com:ns/repo-2.git
+    path: /ghwh
+    secret: superSecret123
+    directory: /path/to/clone/to222
+    sshPrivKey: /path/to/priv/key2222
+    sshPassPhrase: superPassPhrase222
