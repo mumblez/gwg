@@ -1,16 +1,23 @@
+# listen and port changes require restart
+listen: localhost
 port: 5555
 user: gwg
 group: gwg
+# minimum for each repo is url, (webhook) path and directory
 repos:
+  # required
   - url: git@github.com:ns/repo-1.git
     path: /ghwha
-    secret: superSecret
     directory: /path/to/clone/to
+    # optional
+    trigger: /path/to/trigger/file-a
+    secret: superSecret-repo-1
     sshPrivKey: /path/to/priv/key
-    sshPassPhrase: superPassPhrase
+    sshPassPhrase: superPassPhrase-1
   - url: git@github.com:ns/repo-2.git
     path: /ghwh
-    secret: superSecret123
-    directory: /path/to/clone/to222
-    sshPrivKey: /path/to/priv/key2222
-    sshPassPhrase: superPassPhrase222
+    directory: /path/to/clone/to-2
+    trigger: /path/to/trigger/file-2
+    secret: superSecret-repo-2
+    sshPrivKey: /path/to/priv/key-2
+    sshPassPhrase: abc
