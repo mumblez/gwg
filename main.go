@@ -254,12 +254,14 @@ func handler(w http.ResponseWriter, r *http.Request) {
 
 	switch e := event.(type) {
 	case *github.PushEvent:
-		if C.Repos[idx].URL == *e.Repo.SSHURL {
+		if C.Repos[idx].URL == *e.Repo.SSHURL && C.Repos[idx].Branch == strings.TrimPrefix(*.Ref, "/refs/heads/") {
 			if _, err := os.Stat(C.Repos[idx].Directory); err != nil {
 				go C.Repos[idx].clone()
 			} else {
 				go C.Repos[idx].update()
 			}
+		} else {
+			log.Warnf("Push event did not match our configuration: \nURL: %v\nBRANCH: %v\n", *e.Repo.SSHURL, *e.Ref)
 		}
 		return
 	default:
