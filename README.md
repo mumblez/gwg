@@ -75,7 +75,21 @@ Choose the format of your choice, yaml, json or toml.
     - ensure only gwg user can read config file
 - start server as newly created user!
 
-Note, the configuration file can be editted and it will be hot-reloaded, the only exception is if you need you update the `listen` and `port` fields as they will require a restart!
+# Notes
+
+## Hot Reloading
+The configuration file can be editted and it will be hot-reloaded, the only exception is if you need you update the `listen` and `port` fields as they will require a restart!
+
+## Update method
+If the repository does not exist locally it will be cloned
+
+If the repository already exists, it will be updated, equivalent to:
+
+```sh
+git fetch origin
+git reset --hard $LATEST_REMOTE_COMMIT_ON_SPECIFIC_BRANCH
+```
+This means we will always trust the remote over our local repository, it also means we avoid any potential merge conflicts as we do a hard reset!
 
 # TODO
 - systemd config
