@@ -92,13 +92,7 @@ func (r *repo) clone() {
 	}
 	rlog.Info("Cloned repository")
 
-	if r.HasTrigger() {
-		if err := r.touchTrigger(); err != nil {
-			log.Errorf("Failed to update trigger file: %v\n")
-			return
-		}
-		log.Info("Successfully updated trigger file")
-	}
+	r.touchTrigger()
 }
 
 // essentially git fetch and git reset --hard origin/master | latest remote commit
@@ -180,17 +174,29 @@ func (r *repo) update() {
 		return
 	}
 
+	r.touchTrigger()
+}
+
+func (r *repo) touchTrigger() {
 	if r.HasTrigger() {
-		if err := r.touchTrigger(); err != nil {
-			log.Errorf("Failed to update trigger file: %v\n")
+		if err := os.Chtimes(r.Trigger, time.Now(), time.Now()); err != nil {
+			log.Errorf("Failed to update trigger file: %v\n", err)
 			return
 		}
 		log.Info("Successfully updated trigger file")
 	}
 }
 
-func (r *repo) touchTrigger() error {
-	return os.Chtimes(r.Trigger, time.Now(), time.Now())
+func (c *config) validatePathsUniq() {
+	paths := make(map[string]bool)
+
+	for _, r := range c.Repos {
+		if _, ok := paths[r.Path]; ok {
+			// duplicate found
+			log.Errorf("Multiple repos found with the same path: %v, please correct, only the first instance will be used otherwise", r.Path)
+		}
+		paths[r.Path] = true
+	}
 }
 
 // short name for the logs
@@ -286,6 +292,8 @@ func main() {
 		log.Fatalf("Failed to setup configuration: %v\n", err)
 	}
 
+	C.validatePathsUniq()
+
 	// hot reloading can be improved, (adding mutexes might be overkill for now)
 	viper.WatchConfig()
 	viper.OnConfigChange(func(e fsnotify.Event) {
@@ -344,6 +352,7 @@ func main() {
 		// viper.Unmarshal(&C)
 		// old fields remain if commented out!
 		// have to rebuild or blank out existing values
+		C.validatePathsUniq()
 		log.Warn("Configuration updated")
 	})
 
