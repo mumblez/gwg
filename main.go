@@ -90,6 +90,9 @@ func (r *repo) clone() {
 	}
 	rlog.Info("Cloned repository")
 
+	if r.Trigger == "" {
+		return
+	}
 	if err := r.touchTrigger(); err != nil {
 		log.Errorf("Failed to update trigger file: %v\n")
 		return
@@ -175,6 +178,9 @@ func (r *repo) update() {
 		return
 	}
 
+	if r.Trigger == "" {
+		return
+	}
 	if err := r.touchTrigger(); err != nil {
 		log.Errorf("Failed to update trigger file: %v\n")
 		return
