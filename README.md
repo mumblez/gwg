@@ -31,6 +31,11 @@ Github Webhook Gateway - WIP
 ```yaml
 listen: localhost                           # leave blank to accept connections on all interfaces
 port: 5555                                  # specify a port above 1024 to run as a non root user
+logging:
+  format: text                              # [text|json] defaults to text or json if not recognised
+  output: stdout                            # [stdout|/path/to/file] defaults to stdout
+  level: info                               # [debug|info|warn|error] defaults to info
+  timestamp: true                           # [true|false] display timestamp or not, defaults to true
 repos:
     ### required ###
   - url: git@github.com:ns/repo-1.git
@@ -76,5 +81,4 @@ Note, the configuration file can be editted and it will be hot-reloaded, the onl
 - add slack notifications on errors
 - add cli flags and env vars
 - refactor
-
 

@@ -8,32 +8,42 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/google/go-github/github"
-	log "github.com/sirupsen/logrus"
+	//log "github.com/sirupsen/logrus"
+	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 	"gopkg.in/src-d/go-git.v4"
 	"gopkg.in/src-d/go-git.v4/plumbing"
 	"gopkg.in/src-d/go-git.v4/plumbing/transport/ssh"
 )
 
-func init() {
-	// Log as JSON instead of the default ASCII formatter..
-	// log.SetFormatter(&log.JSONFormatter{})
-	log.SetFormatter(&log.TextFormatter{FullTimestamp: true})
-
-	// Output to stdout instead of the default stderr
-	// Can be any io.Writer, see below for File example
-	log.SetOutput(os.Stdout)
-
-	// Only log the warning severity or above.
-	log.SetLevel(log.InfoLevel)
-}
+// func init() {
+// 	// Log as JSON instead of the default ASCII formatter..
+// 	// log.SetFormatter(&log.JSONFormatter{})
+// 	log.SetFormatter(&log.TextFormatter{FullTimestamp: true})
+//
+// 	// Output to stdout instead of the default stderr
+// 	// Can be any io.Writer, see below for File example
+// 	log.SetOutput(os.Stdout)
+//
+// 	// Only log the warning severity or above.
+// 	log.SetLevel(log.InfoLevel)
+// }
 
 type config struct {
-	Listen string `mapstructure:"listen"`
-	Port   string `mapstructure:"port"`
+	Listen  string `mapstructure:"listen"`
+	Port    string `mapstructure:"port"`
+	Logging logger
+	Logfile *os.File
 	// User   string `mapstructure:"user"`
 	// Group  string `mapstructure:"group"`
 	Repos []repo
+}
+
+type logger struct {
+	Format    string `mapstructure:"format"`
+	Output    string `mapstructure:"output"`
+	Level     string `mapstructure:"level"`
+	Timestamp bool   `mapstructure:"timestamp"`
 }
 
 type repo struct {
@@ -50,6 +60,8 @@ type repo struct {
 
 // C is global config
 var C config
+
+var log = logrus.New()
 
 func (c *config) FindRepo(path string) (int, bool) {
 	for r, repo := range c.Repos {
@@ -69,7 +81,8 @@ func cleanURL(url string) string {
 }
 
 func (r *repo) clone() {
-	rlog := log.WithFields(log.Fields{
+
+	rlog := log.WithFields(logrus.Fields{
 		"repo":   r.Name(),
 		"path":   r.Path,
 		"branch": r.Branch,
@@ -97,7 +110,7 @@ func (r *repo) clone() {
 
 // essentially git fetch and git reset --hard origin/master | latest remote commit
 func (r *repo) update() {
-	rlog := log.WithFields(log.Fields{
+	rlog := log.WithFields(logrus.Fields{
 		"repo":   r.Name(),
 		"path":   r.Path,
 		"branch": r.Branch,
@@ -267,7 +280,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 				go C.Repos[idx].update()
 			}
 		} else {
-			log.WithFields(log.Fields{
+			log.WithFields(logrus.Fields{
 				"URL": *e.Repo.SSHURL,
 				"Ref": *e.Ref,
 			}).Warn("Push event did not match our configuration")
@@ -276,6 +289,58 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	default:
 		log.Warnf("Unknown event type %v\n", github.WebHookType(r))
 		return
+	}
+}
+
+func (c *config) setLogging() {
+
+	// inverse timestamp
+	var dts bool
+	if c.Logging.Timestamp {
+		dts = false
+	} else {
+		dts = true
+	}
+
+	if c.Logging.Format == "" || c.Logging.Format == "text" {
+		log.Formatter = &logrus.TextFormatter{FullTimestamp: true, DisableTimestamp: dts}
+	} else {
+		log.Formatter = &logrus.JSONFormatter{DisableTimestamp: dts}
+	}
+
+	switch c.Logging.Level {
+	case "info":
+		log.SetLevel(logrus.InfoLevel)
+	case "debug":
+		log.SetLevel(logrus.DebugLevel)
+	case "warn":
+		log.SetLevel(logrus.WarnLevel)
+	case "error":
+		log.SetLevel(logrus.ErrorLevel)
+	default:
+		log.SetLevel(logrus.InfoLevel)
+	}
+	// file or stdout
+	if c.Logging.Output == "" || c.Logging.Output == "stdout" {
+		if c.Logfile != nil {
+			c.Logfile.Close()
+			c.Logfile = nil
+		}
+		log.Out = os.Stdout
+	} else {
+		if c.Logfile != nil {
+			if err := c.Logfile.Close(); err != nil {
+				log.Errorf("Error closing logfile handle = %+v\n", err)
+			}
+		}
+		file, err := os.OpenFile(c.Logging.Output, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0660)
+		if err != nil {
+			log.Out = os.Stdout
+			log.Errorf("Failed to log to file, using default stdout: %v\n", err)
+			return
+		}
+		c.Logfile = file
+		log.Out = c.Logfile
 	}
 }
 
@@ -291,24 +356,39 @@ func main() {
 		log.Fatalf("Failed to setup configuration: %v\n", err)
 	}
 
+	C.setLogging()
 	C.validatePathsUniq()
 
 	// hot reloading can be improved, (adding mutexes might be overkill for now)
 	viper.WatchConfig()
 	viper.OnConfigChange(func(e fsnotify.Event) {
-		log.Warn("Config file changed: ", e.Name)
 
-		// update core config
-		// if viper.IsSet("user") {
-		// 	C.User = viper.GetString("user")
-		// } else {
-		// 	C.User = ""
-		// }
-		// if viper.IsSet("group") {
-		// 	C.Group = viper.GetString("group")
-		// } else {
-		// 	C.Group = ""
-		// }
+		// ### update core config ####
+
+		// set logging
+		if viper.IsSet("logging.format") {
+			C.Logging.Format = viper.GetString("logging.format")
+		} else {
+			C.Logging.Format = "text"
+		}
+		if viper.IsSet("logging.output") {
+			C.Logging.Output = viper.GetString("logging.output")
+		} else {
+			C.Logging.Output = "stdout"
+		}
+		if viper.IsSet("logging.level") {
+			C.Logging.Level = viper.GetString("logging.level")
+		} else {
+			C.Logging.Level = "info"
+		}
+		if viper.IsSet("logging.timestamp") {
+			C.Logging.Timestamp = viper.GetBool("logging.timestamp")
+		} else {
+			C.Logging.Timestamp = true
+		}
+		C.setLogging()
+
+		log.Warn("Config file changed: ", e.Name)
 
 		// update repo configs, we have to generate new repo configs incase old fields get removed or
 		// commented out
