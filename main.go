@@ -165,7 +165,8 @@ func (r *repo) update() {
 		rlog.Infof("Changes confirmed, latest hash: %v", headRef.Hash())
 	} else {
 		rlog.Error("Something went wrong, hashes don't match!")
-		rlog.Debugf("Remote hash: %v\nLocal hash:  %v", remoteRef.Hash(), headRef.Hash())
+		rlog.Debugf("Remote hash: %v", remoteRef.Hash())
+		rlog.Debugf("Local hash:  %v", headRef.Hash())
 		return
 	}
 
@@ -422,7 +423,7 @@ func main() {
 		}
 		C.Repos = newRepos
 		// viper.Unmarshal(&C)
-		// old fields remain if commented out!
+		// old fields remain if commented out!.
 		// have to rebuild or blank out existing values
 		C.validatePathsUniq()
 		log.Warn("Configuration updated")
