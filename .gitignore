@@ -1,6 +1,9 @@
 # debug
 debug*
 *.swp
+config.yaml
+config.json
+config.toml
 
 
 # Binaries for programs and plugins
