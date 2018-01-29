@@ -33,7 +33,7 @@ To update multiple git repositories when changes are pushed to github WITHOUT po
 # Configuration
 
 ```yaml
-listen: localhost                           # leave blank to accept connections on all interfaces
+listen: localhost                           # leave blank or remove to accept connections on all interfaces
 port: 5555                                  # specify a port above 1024 to run as a non root user
 logging:
   format: text                              # [text|json] defaults to text or json if not recognised
@@ -83,6 +83,8 @@ Choose the format of your choice, yaml, json or toml.
 ## Hot Reloading
 The configuration file can be editted and it will be hot-reloaded, the only exception is if you need you update the `listen` and `port` fields as they will require a restart!
 
+Changes are detected when inotify `CREATE` events occur and hot reloading will proceed as expected, but if you simply echo values straight into the configuration file, e.g. `echo '#' >> /etc/gwg/config.yaml` no there will be no hot-reloading. It's more common to open the file, edit and save which will then create the `CREATE` event.
+
 ## Update method
 If the repository does not exist locally it will be cloned
 
@@ -93,6 +95,45 @@ git fetch origin
 git reset --hard $LATEST_REMOTE_COMMIT_ON_SPECIFIC_BRANCH
 ```
 This means we will always trust the remote over our local repository, it also means we avoid any potential merge conflicts as we do a hard reset!
+
+## Logging
+If you want systemd to handle logs with journalctl, you can set:
+```yaml
+...
+logging:
+  format: text
+  output: stdout
+  timestamp: false
+  ...
+```
+systemd will capture stdout and will also add a timestamp so best to set to `false`.
+
+## basic systemd service config
+```
+[Unit]
+Description=Github Webhook Gateway
+After=syslog.target network.target
+
+[Service]
+User=gwg
+Group=gwg
+WorkingDirectory=/etc/gwg
+ExecStart=/usr/local/bin/gwg
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Save as `/etc/systemd/system/gwg.service`
+
+```sh
+systemctl daemon-reload
+systemctl enable gwg
+systemctl start # assuming you already have a configuration /etc/gwg/config.yaml
+```
+
+
 
 # TODO
 - systemd config
