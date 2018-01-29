@@ -31,9 +31,9 @@ func init() {
 type config struct {
 	Listen string `mapstructure:"listen"`
 	Port   string `mapstructure:"port"`
-	User   string `mapstructure:"user"`
-	Group  string `mapstructure:"group"`
-	Repos  []repo
+	// User   string `mapstructure:"user"`
+	// Group  string `mapstructure:"group"`
+	Repos []repo
 }
 
 type repo struct {
@@ -90,14 +90,13 @@ func (r *repo) clone() {
 	}
 	rlog.Info("Cloned repository")
 
-	if r.Trigger == "" {
-		return
+	if r.HasTrigger() {
+		if err := r.touchTrigger(); err != nil {
+			log.Errorf("Failed to update trigger file: %v\n")
+			return
+		}
+		log.Info("Successfully updated trigger file")
 	}
-	if err := r.touchTrigger(); err != nil {
-		log.Errorf("Failed to update trigger file: %v\n")
-		return
-	}
-	log.Info("Successfully updated trigger file")
 }
 
 // essentially git fetch and git reset --hard origin/master | latest remote commit
@@ -178,14 +177,13 @@ func (r *repo) update() {
 		return
 	}
 
-	if r.Trigger == "" {
-		return
+	if r.HasTrigger() {
+		if err := r.touchTrigger(); err != nil {
+			log.Errorf("Failed to update trigger file: %v\n")
+			return
+		}
+		log.Info("Successfully updated trigger file")
 	}
-	if err := r.touchTrigger(); err != nil {
-		log.Errorf("Failed to update trigger file: %v\n")
-		return
-	}
-	log.Info("Successfully updated trigger file")
 }
 
 func (r *repo) touchTrigger() error {
@@ -291,16 +289,16 @@ func main() {
 		log.Warn("Config file changed: ", e.Name)
 
 		// update core config
-		if viper.IsSet("user") {
-			C.User = viper.GetString("user")
-		} else {
-			C.User = ""
-		}
-		if viper.IsSet("group") {
-			C.Group = viper.GetString("group")
-		} else {
-			C.Group = ""
-		}
+		// if viper.IsSet("user") {
+		// 	C.User = viper.GetString("user")
+		// } else {
+		// 	C.User = ""
+		// }
+		// if viper.IsSet("group") {
+		// 	C.Group = viper.GetString("group")
+		// } else {
+		// 	C.Group = ""
+		// }
 
 		// update repo configs, we have to generate new repo configs incase old fields get removed or
 		// commented out
@@ -341,7 +339,8 @@ func main() {
 		log.Warn("Configuration updated")
 	})
 
-	// listen and port changes require a restart
+	// Start the server
+	// (listen and port changes require a restart)
 	http.HandleFunc("/", handler)
 	http.ListenAndServe(C.Listen+":"+C.Port, nil)
 
