@@ -41,6 +41,7 @@ type repo struct {
 	Path          string `mapstructure:"path"`
 	Directory     string `mapstructure:"directory"`
 	Branch        string `mapstructure:"branch"`
+	Remote        string `mapstructure:"remote"`
 	Secret        string `mapstructure:"secret"`
 	SSHPrivKey    string `mapstructure:"sshPrivKey"`
 	SSHPassPhrase string `mapstructure:"sshPassPhrase"`
@@ -69,8 +70,9 @@ func cleanURL(url string) string {
 
 func (r *repo) clone() {
 	rlog := log.WithFields(log.Fields{
-		"repo": r.Name(),
-		"path": r.Path,
+		"repo":   r.Name(),
+		"path":   r.Path,
+		"branch": r.Branch,
 	})
 	sshAuth, err := ssh.NewPublicKeysFromFile("git", r.SSHPrivKey, r.SSHPassPhrase)
 	if err != nil {
@@ -102,8 +104,10 @@ func (r *repo) clone() {
 // essentially git fetch and git reset --hard origin/master | latest remote commit
 func (r *repo) update() {
 	rlog := log.WithFields(log.Fields{
-		"repo": r.Name(),
-		"path": r.Path,
+		"repo":   r.Name(),
+		"path":   r.Path,
+		"branch": r.Branch,
+		"remote": r.Remote,
 	})
 	sshAuth, err := ssh.NewPublicKeysFromFile("git", r.SSHPrivKey, r.SSHPassPhrase)
 	if err != nil {
@@ -123,9 +127,8 @@ func (r *repo) update() {
 		return
 	}
 
-	// TODO: assume origin?
 	err = repo.Fetch(&git.FetchOptions{
-		RemoteName: "origin",
+		RemoteName: r.Remote,
 		Auth:       sshAuth,
 	})
 	if err == git.NoErrAlreadyUpToDate {
@@ -139,9 +142,9 @@ func (r *repo) update() {
 	rlog.Info("Fetched new updates")
 
 	// Get local and remote refs to compare hashes before we proceed
-	remoteRef, err := repo.Reference(plumbing.ReferenceName("refs/remotes/origin/"+r.Branch), true)
+	remoteRef, err := repo.Reference(plumbing.ReferenceName("refs/remotes/"+r.Remote+"/"+r.Branch), true)
 	if err != nil {
-		rlog.Errorf("Failed to get remote reference for remotes/origin/%s: %v\n", r.Branch, err)
+		rlog.Errorf("Failed to get remote reference for remotes/%s/%s: %v\n", r.Remote, r.Branch, err)
 		return
 	}
 	localRef, err := repo.Reference(plumbing.ReferenceName("HEAD"), true)
@@ -316,6 +319,8 @@ func main() {
 					newRepo.Directory = b.(string)
 				case "branch":
 					newRepo.Branch = b.(string)
+				case "remote":
+					newRepo.Remote = b.(string)
 				case "trigger":
 					newRepo.Trigger = b.(string)
 				case "secret":
@@ -329,6 +334,9 @@ func main() {
 			// defaults
 			if newRepo.Branch == "" {
 				newRepo.Branch = "master"
+			}
+			if newRepo.Remote == "" {
+				newRepo.Remote = "origin"
 			}
 			newRepos = append(newRepos, newRepo)
 		}
