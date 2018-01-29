@@ -8,7 +8,6 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/google/go-github/github"
-	//log "github.com/sirupsen/logrus"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 	"gopkg.in/src-d/go-git.v4"
@@ -21,9 +20,7 @@ type config struct {
 	Port    string `mapstructure:"port"`
 	Logging logger
 	Logfile *os.File
-	// User   string `mapstructure:"user"`
-	// Group  string `mapstructure:"group"`
-	Repos []repo
+	Repos   []repo
 }
 
 type logger struct {
