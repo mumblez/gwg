@@ -24,8 +24,10 @@ To update multiple git repositories when changes are pushed to github WITHOUT po
 2. Check the URL path against any repos we have in our configuration, if a match is found:
     - Validate the payload against the webhook secret
     - Validate the git url in payload against our config
-3. If repository doesn't exist locally clone, else update
-4. Touch trigger file, enough for inotify event and/or incron to trigger post tasks
+    - Respond to only github push events
+    - Before we proceed to update, we do a final check against of the git url and branch against our config
+3. If the repository doesn't exist locally we'll do an initial clone, else we'll update
+4. Touch trigger file (if set), enough for inotify event and/or incron to trigger post tasks
 
 
 # Configuration
@@ -44,8 +46,9 @@ repos:
     path: /gwg/repo-1                       # the same path used to setup the webhook
     directory: /path/to/local/repo
     ### optional ###
-    branch: master                          # if left blank, will default to 'master'
-    trigger: /path/to/trigger/file          # the file to 'touch' after a successful update
+    branch: master                          # default to master
+    remote: origin                          # defaults to origin
+    trigger: /path/to/trigger/file          # the file to `touch` after a successful update
     secret: webhookPassword                 # the secret password used to setup the webhook
     sshPrivKey: /path/to/private/key        # leave blank or remove field if public repository
     sshPassPhrase: sshPassPhrase-123        # leave blank or remove field if no passphrase
@@ -57,7 +60,7 @@ repos:
     secret: superSecret-repo-2
     sshPrivKey: /path/to/priv/key-2
     sshPassPhrase: abc
-    # add more repos ...
+    # append more repos ...
 ```
 
 The program will search for a `config.[yaml,json,toml]` file in:
@@ -94,6 +97,7 @@ This means we will always trust the remote over our local repository, it also me
 # TODO
 - systemd config
 - create trigger file if not exists?
+- add raw shell exec after update?
 - add slack notifications on errors
 - add cli flags and env vars
 - refactor
