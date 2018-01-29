@@ -75,5 +75,6 @@ Note, the configuration file can be editted and it will be hot-reloaded, the onl
 - create trigger file if not exists?
 - add slack notifications on errors
 - add cli flags and env vars
+- refactor
 
 
