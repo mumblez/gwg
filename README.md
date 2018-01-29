@@ -3,8 +3,10 @@ Github Webhook Gateway - WIP
 
 # Goal
 
+To update multiple git repositories when changes are pushed to github WITHOUT polling!
+
 - Handling of multiple repository webhooks
-    - reuse of base url path possible
+    - one webhook path per repo (on same URL)
     - read the payload
         - get the repository info and verify with the relevant secret from config
 - Force update of local repo from remote repo
@@ -58,7 +60,7 @@ repos:
     # add more repos ...
 ```
 
-The program will search for a `config.{yaml,json,toml}` file in:
+The program will search for a `config.[yaml,json,toml]` file in:
 - `/etc/gwg`
 - `.` - current directory
 
@@ -67,11 +69,11 @@ Choose the format of your choice, yaml, json or toml.
 # Setup
 
 - create regular user and group, e.g. `gwg`
-- ensure user and/or group can write to repository locations and trigger files
+- ensure user and/or group can write to repository locations, read ssh private keys and trigger files
     - ensure trigger files exist if you want / have post update tasks
-- add config to `/etc/gwg`, e.g. `/etc/gwg/config.yaml`
+- add config to `/etc/gwg`, e.g. `/etc/gwg/config.yaml` or current directory of executable
     - ensure only gwg user can read config file
-- start server
+- start server as newly created user!
 
 Note, the configuration file can be editted and it will be hot-reloaded, the only exception is if you need you update the `listen` and `port` fields as they will require a restart!
 
