@@ -72,7 +72,7 @@ func (r *repo) clone() {
 	})
 	sshAuth, err := ssh.NewPublicKeysFromFile("git", r.SSHPrivKey, r.SSHPassPhrase)
 	if err != nil {
-		rlog.Errorf("Failed to setup ssh auth: %v\n", err)
+		rlog.Errorf("Failed to setup ssh auth: %v", err)
 		return
 	}
 
@@ -83,7 +83,7 @@ func (r *repo) clone() {
 		Auth:          sshAuth,
 	})
 	if err != nil {
-		rlog.Errorf("Failed to clone repository: %v\n", err)
+		rlog.Errorf("Failed to clone repository: %v", err)
 		return
 	}
 	rlog.Info("Cloned repository")
@@ -101,19 +101,19 @@ func (r *repo) update() {
 	})
 	sshAuth, err := ssh.NewPublicKeysFromFile("git", r.SSHPrivKey, r.SSHPassPhrase)
 	if err != nil {
-		rlog.Errorf("Failed to setup ssh auth: %v\n", err)
+		rlog.Errorf("Failed to setup ssh auth: %v", err)
 		return
 	}
 
 	repo, err := git.PlainOpen(r.Directory)
 	if err != nil {
-		rlog.Errorf("Failed to open local git repository: %v\n", err)
+		rlog.Errorf("Failed to open local git repository: %v", err)
 		return
 	}
 
 	w, err := repo.Worktree()
 	if err != nil {
-		rlog.Errorf("Failed to open work tree for repository: %v\n", err)
+		rlog.Errorf("Failed to open work tree for repository: %v", err)
 		return
 	}
 
@@ -126,7 +126,7 @@ func (r *repo) update() {
 		return
 	}
 	if err != nil {
-		rlog.Errorf("Failed to fetch updates: %v\n", err)
+		rlog.Errorf("Failed to fetch updates: %v", err)
 		return
 	}
 	rlog.Info("Fetched new updates")
@@ -134,12 +134,12 @@ func (r *repo) update() {
 	// Get local and remote refs to compare hashes before we proceed
 	remoteRef, err := repo.Reference(plumbing.ReferenceName("refs/remotes/"+r.Remote+"/"+r.Branch), true)
 	if err != nil {
-		rlog.Errorf("Failed to get remote reference for remotes/%s/%s: %v\n", r.Remote, r.Branch, err)
+		rlog.Errorf("Failed to get remote reference for remotes/%s/%s: %v", r.Remote, r.Branch, err)
 		return
 	}
 	localRef, err := repo.Reference(plumbing.ReferenceName("HEAD"), true)
 	if err != nil {
-		rlog.Errorf("Failed to get local reference for HEAD: %v\n", err)
+		rlog.Errorf("Failed to get local reference for HEAD: %v", err)
 		return
 	}
 
@@ -151,21 +151,21 @@ func (r *repo) update() {
 	// git reset --hard [origin/master|hash]
 	err = w.Reset(&git.ResetOptions{Mode: git.HardReset, Commit: remoteRef.Hash()})
 	if err != nil {
-		rlog.Errorf("Failed to hard reset work tree: %v\n", err)
+		rlog.Errorf("Failed to hard reset work tree: %v", err)
 		return
 	}
 	rlog.Info("Hard reset successful, confirming changes....")
 	headRef, err := repo.Reference(plumbing.ReferenceName("HEAD"), true)
 	if err != nil {
-		rlog.Errorf("Failed to get local HEAD reference: %v\n", err)
+		rlog.Errorf("Failed to get local HEAD reference: %v", err)
 		return
 	}
 
 	if headRef.Hash() == remoteRef.Hash() {
-		rlog.Infof("Changes confirmed, latest hash: %v\n", headRef.Hash())
+		rlog.Infof("Changes confirmed, latest hash: %v", headRef.Hash())
 	} else {
 		rlog.Error("Something went wrong, hashes don't match!")
-		rlog.Debugf("Remote hash: %v\nLocal hash:  %v\n", remoteRef.Hash(), headRef.Hash())
+		rlog.Debugf("Remote hash: %v\nLocal hash:  %v", remoteRef.Hash(), headRef.Hash())
 		return
 	}
 
@@ -175,7 +175,7 @@ func (r *repo) update() {
 func (r *repo) touchTrigger() {
 	if r.HasTrigger() {
 		if err := os.Chtimes(r.Trigger, time.Now(), time.Now()); err != nil {
-			log.Errorf("Failed to update trigger file: %v\n", err)
+			log.Errorf("Failed to update trigger file: %v", err)
 			return
 		}
 		log.Info("Successfully updated trigger file")
@@ -237,20 +237,20 @@ func (r *repo) HasSSHPassphrase() bool {
 func handler(w http.ResponseWriter, r *http.Request) {
 	idx, ok := C.FindRepo(r.URL.Path)
 	if !ok {
-		log.Warnf("Repository not found for path: %v\n", r.URL.Path)
+		log.Warnf("Repository not found for path: %v", r.URL.Path)
 		return
 	}
 
 	payload, err := github.ValidatePayload(r, []byte(C.Repos[idx].Secret))
 	defer r.Body.Close()
 	if err != nil {
-		log.Errorf("Error validating request body: %v\n", err)
+		log.Errorf("Error validating request body: %v", err)
 		return
 	}
 
 	event, err := github.ParseWebHook(github.WebHookType(r), payload)
 	if err != nil {
-		log.Errorf("Could not parse webhook: %v\n", err)
+		log.Errorf("Could not parse webhook: %v", err)
 		return
 	}
 
@@ -270,7 +270,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	default:
-		log.Warnf("Unknown event type %v\n", github.WebHookType(r))
+		log.Warnf("Unknown event type %v", github.WebHookType(r))
 		return
 	}
 }
@@ -313,13 +313,13 @@ func (c *config) setLogging() {
 	} else {
 		if c.Logfile != nil {
 			if err := c.Logfile.Close(); err != nil {
-				log.Errorf("Error closing logfile handle = %+v\n", err)
+				log.Errorf("Error closing logfile handle = %+v", err)
 			}
 		}
 		file, err := os.OpenFile(c.Logging.Output, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0660)
 		if err != nil {
 			log.Out = os.Stdout
-			log.Errorf("Failed to log to file, using default stdout: %v\n", err)
+			log.Errorf("Failed to log to file, using default stdout: %v", err)
 			return
 		}
 		c.Logfile = file
@@ -333,10 +333,10 @@ func main() {
 	viper.AddConfigPath("/etc/gwg")
 	viper.AddConfigPath(".")
 	if err := viper.ReadInConfig(); err != nil {
-		log.Fatalf("Failed to read config file: %v\n", err)
+		log.Fatalf("Failed to read config file: %v", err)
 	}
 	if err := viper.Unmarshal(&C); err != nil {
-		log.Fatalf("Failed to setup configuration: %v\n", err)
+		log.Fatalf("Failed to setup configuration: %v", err)
 	}
 
 	C.setLogging()
@@ -344,7 +344,17 @@ func main() {
 
 	// hot reloading can be improved, (adding mutexes might be overkill for now)
 	viper.WatchConfig()
+	// event fired twice on linux but once on mac? wtf!!!
 	viper.OnConfigChange(func(e fsnotify.Event) {
+		// log.Infof("op: %+v", e.Op)
+		// fires off CREATE and WRITE on linux
+		// fires off CREATE on mac
+		// both using vim, both creates swp files by default, hmmmm
+		// ignore WRITE, but we won't catch changes if things are echo'd directly into file!
+		// normal use case will be to open and edit file, so we'll ignore WRITE events for now
+		if e.Op != fsnotify.Create {
+			return
+		}
 
 		// ### update core config ####
 
@@ -371,7 +381,7 @@ func main() {
 		}
 		C.setLogging()
 
-		log.Warn("Config file changed: ", e.Name)
+		log.Warnf("Config file changed: %v - %v", e.Name, e.Op)
 
 		// update repo configs, we have to generate new repo configs incase old fields get removed or
 		// commented out
