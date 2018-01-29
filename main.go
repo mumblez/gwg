@@ -44,7 +44,6 @@ type repo struct {
 
 // C is global config
 var C config
-
 var log = logrus.New()
 
 func (c *config) FindRepo(path string) (int, bool) {
