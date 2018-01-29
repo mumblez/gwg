@@ -158,9 +158,7 @@ func (r *repo) update() {
 		rlog.Errorf("Failed to hard reset work tree: %v\n", err)
 		return
 	}
-	rlog.Info("Work tree up to date")
-
-	rlog.Info("Confirming changes....")
+	rlog.Info("Hard reset successful, confirming changes....")
 	headRef, err := repo.Reference(plumbing.ReferenceName("HEAD"), true)
 	if err != nil {
 		rlog.Errorf("Failed to get local HEAD reference: %v\n", err)
@@ -168,9 +166,10 @@ func (r *repo) update() {
 	}
 
 	if headRef.Hash() == remoteRef.Hash() {
-		rlog.Infof("Successfully updated local repository, latest hash: %v\n", headRef.Hash())
+		rlog.Infof("Changes confirmed, latest hash: %v\n", headRef.Hash())
 	} else {
 		rlog.Error("Something went wrong, hashes don't match!")
+		rlog.Debugf("Remote hash: %v\nLocal hash:  %v\n", remoteRef.Hash(), headRef.Hash())
 		return
 	}
 
