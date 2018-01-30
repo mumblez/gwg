@@ -363,6 +363,7 @@ func main() {
 		// 	return
 		// }
 
+		// seems to work well, we can tweak the timing but quarter second seems ideal
 		// alternatively, we throttle the events, say a quarter second
 		// at a time, will allow us to catch WRITE and CREATE
 		// 1 second = 1000917642 nanoseconds
