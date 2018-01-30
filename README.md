@@ -46,7 +46,7 @@ repos:
     path: /gwg/repo-1                       # the same path used to setup the webhook
     directory: /path/to/local/repo
     ### optional ###
-    branch: master                          # default to master
+    branch: master                          # defaults to master
     remote: origin                          # defaults to origin
     trigger: /path/to/trigger/file          # the file to `touch` after a successful update
     secret: webhookPassword                 # the secret password used to setup the webhook
@@ -71,19 +71,18 @@ Choose the format of your choice, yaml, json or toml.
 
 # Setup
 
-- create regular user and group, e.g. `gwg`
+- create system user and group, e.g. for gwg - `useradd -r -b /etc -U gwg` # will set home to /etc/gwg but directory still needs to be created
+- create and secure config dir - `mkdir /etc/gwg && chown gwg:gwg /etc/gwg && chmod 770 /etc/gwg`
 - ensure user and/or group can write to repository locations, read ssh private keys and trigger files
     - ensure trigger files exist if you want / have post update tasks
 - add config to `/etc/gwg`, e.g. `/etc/gwg/config.yaml` or current directory of executable
     - ensure only gwg user can read config file
-- start server as newly created user!
+- start server as newly created user!, if you have a systemd system, see the gwg.service sample file and instructions below
 
 # Notes
 
 ## Hot Reloading
 The configuration file can be editted and it will be hot-reloaded, the only exception is if you need you update the `listen` and `port` fields as they will require a restart!
-
-Changes are detected when inotify `CREATE` events occur and hot reloading will proceed as expected, but if you simply echo values straight into the configuration file, e.g. `echo '#' >> /etc/gwg/config.yaml` no there will be no hot-reloading. It's more common to open the file, edit and save which will then create the `CREATE` event.
 
 ## Update method
 If the repository does not exist locally it will be cloned
@@ -136,7 +135,6 @@ systemctl start # assuming you already have a configuration /etc/gwg/config.yaml
 
 
 # TODO
-- systemd config
 - create trigger file if not exists?
 - add raw shell exec after update?
 - add slack notifications on errors
