@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -23,7 +22,6 @@ type config struct {
 	Logfile    *os.File
 	LastUpdate time.Time
 	Repos      []repo
-	sync.Mutex
 }
 
 type logger struct {
@@ -224,20 +222,6 @@ func (r *repo) HasSecret() bool {
 	return true
 }
 
-func (r *repo) HasSSHPrivKey() bool {
-	if isEmpty(r.SSHPrivKey) {
-		return false
-	}
-	return true
-}
-
-func (r *repo) HasSSHPassphrase() bool {
-	if isEmpty(r.SSHPassPhrase) {
-		return false
-	}
-	return true
-}
-
 func handler(w http.ResponseWriter, r *http.Request) {
 	idx, ok := C.FindRepo(r.URL.Path)
 	if !ok {
@@ -276,6 +260,17 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	default:
 		log.Warnf("Unknown event type %v", github.WebHookType(r))
 		return
+	}
+}
+
+func (c *config) setRepoDefaults() {
+	for i := range c.Repos {
+		if c.Repos[i].Branch == "" {
+			c.Repos[i].Branch = "master"
+		}
+		if c.Repos[i].Remote == "" {
+			c.Repos[i].Remote = "origin"
+		}
 	}
 }
 
@@ -331,11 +326,26 @@ func (c *config) setLogging() {
 	}
 }
 
+func (c *config) refreshTasks() {
+	c.setLogging()
+	c.validatePathsUniq()
+	c.setRepoDefaults()
+	c.LastUpdate = time.Now()
+}
+
 func main() {
 	// setup config
 	viper.SetConfigName("config")
 	viper.AddConfigPath("/etc/gwg")
 	viper.AddConfigPath(".")
+
+	viper.SetDefault("listen", "0.0.0.0")
+	viper.SetDefault("port", 5555)
+	viper.SetDefault("logging.format", "text")
+	viper.SetDefault("logging.output", "stdout")
+	viper.SetDefault("logging.level", "info")
+	viper.SetDefault("logging.timestamp", true)
+
 	if err := viper.ReadInConfig(); err != nil {
 		log.Fatalf("Failed to read config file: %v", err)
 	}
@@ -343,11 +353,7 @@ func main() {
 		log.Fatalf("Failed to setup configuration: %v", err)
 	}
 
-	C.setLogging()
-	C.validatePathsUniq()
-	C.Lock()
-	C.LastUpdate = time.Now()
-	C.Unlock()
+	C.refreshTasks()
 
 	// hot reloading can be improved, (adding mutexes might be overkill for now)
 	viper.WatchConfig()
@@ -363,9 +369,8 @@ func main() {
 		// 	return
 		// }
 
+		// alt method
 		// seems to work well, we can tweak the timing but quarter second seems ideal
-		// alternatively, we throttle the events, say a quarter second
-		// at a time, will allow us to catch WRITE and CREATE
 		// 1 second = 1000917642 nanoseconds
 		// quarter second = 250229410
 		// if time now is less then quarter second of last update, return
@@ -373,80 +378,20 @@ func main() {
 			return
 		}
 
-		// ### update core config ####
+		// create entirely new config, set defaults and change 'C'
+		// yaml and toml differences in repo mappings means we have to unmarshal
+		// everything first.
+		var newC config
+		if err := viper.Unmarshal(&newC); err != nil {
+			log.Fatalf("Failed to setup new configuration: %v", err)
+		}
 
-		// set logging
-		if viper.IsSet("logging.format") {
-			C.Logging.Format = viper.GetString("logging.format")
-		} else {
-			C.Logging.Format = "text"
-		}
-		if viper.IsSet("logging.output") {
-			C.Logging.Output = viper.GetString("logging.output")
-		} else {
-			C.Logging.Output = "stdout"
-		}
-		if viper.IsSet("logging.level") {
-			C.Logging.Level = viper.GetString("logging.level")
-		} else {
-			C.Logging.Level = "info"
-		}
-		if viper.IsSet("logging.timestamp") {
-			C.Logging.Timestamp = viper.GetBool("logging.timestamp")
-		} else {
-			C.Logging.Timestamp = true
-		}
-		C.setLogging()
-
-		log.Warnf("Config file changed: %v - %v", e.Name, e.Op)
-
-		// update repo configs, we have to generate new repo configs incase old fields get removed or
-		// commented out
-		var newRepos []repo
-		repos := viper.Get("repos")
-		for _, v := range repos.([]interface{}) {
-			var newRepo repo
-			// switch on the type and replace v with someVar
-			for a, b := range v.(map[interface{}]interface{}) {
-				switch a {
-				case "url":
-					newRepo.URL = b.(string)
-				case "path":
-					newRepo.Path = b.(string)
-				case "directory":
-					newRepo.Directory = b.(string)
-				case "branch":
-					newRepo.Branch = b.(string)
-				case "remote":
-					newRepo.Remote = b.(string)
-				case "trigger":
-					newRepo.Trigger = b.(string)
-				case "secret":
-					newRepo.Secret = b.(string)
-				case "sshPrivKey":
-					newRepo.SSHPrivKey = b.(string)
-				case "sshPassPhrase":
-					newRepo.SSHPassPhrase = b.(string)
-				}
-			}
-			// defaults
-			if newRepo.Branch == "" {
-				newRepo.Branch = "master"
-			}
-			if newRepo.Remote == "" {
-				newRepo.Remote = "origin"
-			}
-			newRepos = append(newRepos, newRepo)
-		}
-		C.Repos = newRepos
-		// viper.Unmarshal(&C)
-		// old fields remain if commented out!.
-		// have to rebuild or blank out existing values
-		C.validatePathsUniq()
-		C.Lock()
-		C.LastUpdate = time.Now()
-		C.Unlock()
+		log.Warnf("Config file changed: %v", e.Name)
+		log.Debugf("Event: %v", e.Op)
+		newC.refreshTasks()
+		C = newC
 		log.Warn("Configuration updated")
+
 	})
 
 	// Start the server.
