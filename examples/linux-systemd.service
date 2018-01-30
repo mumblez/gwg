@@ -1,0 +1,15 @@
+# RENAME THIS FILE to gwg.service and put under /etc/systemd/system/
+[Unit]
+Description=Github Webhook Gateway
+After=syslog.target network.target
+
+[Service]
+User=gwg
+Group=gwg
+WorkingDirectory=/etc/gwg
+ExecStart=/usr/local/bin/gwg
+KillMode=process
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
