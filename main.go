@@ -406,6 +406,7 @@ func main() {
 		repos := viper.Get("repos")
 		for _, v := range repos.([]interface{}) {
 			var newRepo repo
+			// switch on the type and replace v with someVar
 			for a, b := range v.(map[interface{}]interface{}) {
 				switch a {
 				case "url":
