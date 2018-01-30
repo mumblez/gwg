@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -16,11 +17,13 @@ import (
 )
 
 type config struct {
-	Listen  string `mapstructure:"listen"`
-	Port    string `mapstructure:"port"`
-	Logging logger
-	Logfile *os.File
-	Repos   []repo
+	Listen     string `mapstructure:"listen"`
+	Port       string `mapstructure:"port"`
+	Logging    logger
+	Logfile    *os.File
+	LastUpdate time.Time
+	Repos      []repo
+	sync.Mutex
 }
 
 type logger struct {
@@ -342,6 +345,9 @@ func main() {
 
 	C.setLogging()
 	C.validatePathsUniq()
+	C.Lock()
+	C.LastUpdate = time.Now()
+	C.Unlock()
 
 	// hot reloading can be improved, (adding mutexes might be overkill for now)
 	viper.WatchConfig()
@@ -353,7 +359,16 @@ func main() {
 		// both using vim, both creates swp files by default, hmmmm
 		// ignore WRITE, but we won't catch changes if things are echo'd directly into file!
 		// normal use case will be to open and edit file, so we'll ignore WRITE events for now
-		if e.Op != fsnotify.Create {
+		// if e.Op != fsnotify.Create {
+		// 	return
+		// }
+
+		// alternatively, we throttle the events, say a quarter second
+		// at a time, will allow us to catch WRITE and CREATE
+		// 1 second = 1000917642 nanoseconds
+		// quarter second = 250229410
+		// if time now is less then quarter second of last update, return
+		if time.Since(C.LastUpdate).Nanoseconds() < 250229410 {
 			return
 		}
 
@@ -426,6 +441,9 @@ func main() {
 		// old fields remain if commented out!.
 		// have to rebuild or blank out existing values
 		C.validatePathsUniq()
+		C.Lock()
+		C.LastUpdate = time.Now()
+		C.Unlock()
 		log.Warn("Configuration updated")
 	})
 
