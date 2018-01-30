@@ -448,7 +448,7 @@ func main() {
 		log.Warn("Configuration updated")
 	})
 
-	// Start the server
+	// Start the server.
 	// (listen and port changes require a restart)
 	http.HandleFunc("/", handler)
 	http.ListenAndServe(C.Listen+":"+C.Port, nil)
