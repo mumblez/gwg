@@ -189,6 +189,7 @@ func (r *repo) touchTrigger() {
 			if _, err := os.Stat(r.Trigger); err != nil {
 				rlog.Errorf("Failed to create trigger file: %v", err)
 			}
+			rlog.Info("Successfully created trigger file")
 			return
 		}
 		rlog.Info("Successfully updated trigger file")
