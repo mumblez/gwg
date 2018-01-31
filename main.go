@@ -184,10 +184,9 @@ func (r *repo) touchTrigger() {
 		if err := os.Chtimes(r.Trigger, time.Now(), time.Now()); err != nil {
 			rlog.Errorf("Failed to update trigger file: %v", err)
 
-			// attempt to create trigger file
-			if _, err := os.OpenFile(r.Trigger, os.O_RDONLY|os.O_CREATE, 0660); err != nil {
-				rlog.Errorf("Failed to create trigger file - %v - %v", r.Trigger, err)
-			}
+			// attempt to create trigger file silently, reports error but creates empty file
+			os.OpenFile(r.Trigger, os.O_RDONLY|os.O_CREATE, 0660)
+			//rlog.Errorf("Failed to create trigger file - %v - %v", r.Trigger, err)
 			return
 		}
 		rlog.Info("Successfully updated trigger file")
