@@ -241,7 +241,10 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	payload, err := github.ValidatePayload(r, []byte(C.Repos[idx].Secret))
+	// create separate repo var incase it changes on us (hot reloading)
+	var repo = C.Repos[idx]
+
+	payload, err := github.ValidatePayload(r, []byte(repo.Secret))
 	defer r.Body.Close()
 	if err != nil {
 		log.Errorf("Error validating request body: %v", err)
@@ -256,11 +259,11 @@ func handler(w http.ResponseWriter, r *http.Request) {
 
 	switch e := event.(type) {
 	case *github.PushEvent:
-		if C.Repos[idx].URL == *e.Repo.SSHURL && C.Repos[idx].Branch == strings.TrimPrefix(*e.Ref, "refs/heads/") {
-			if _, err := os.Stat(C.Repos[idx].Directory); err != nil {
-				go C.Repos[idx].clone()
+		if repo.URL == *e.Repo.SSHURL && repo.Branch == strings.TrimPrefix(*e.Ref, "refs/heads/") {
+			if _, err := os.Stat(repo.Directory); err != nil {
+				go repo.clone()
 			} else {
-				go C.Repos[idx].update()
+				go repo.update()
 			}
 		} else {
 			log.WithFields(logrus.Fields{
