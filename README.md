@@ -135,7 +135,7 @@ systemctl start # assuming you already have a configuration /etc/gwg/config.yaml
 
 
 # TODO
-- create trigger file if not exists?
+- add option to initialise / bootstrap the repository locally if does not exist?
 - add raw shell exec after update?
 - add slack notifications on errors
 - add cli flags and env vars
