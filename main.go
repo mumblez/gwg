@@ -18,6 +18,7 @@ import (
 type config struct {
 	Listen     string `mapstructure:"listen"`
 	Port       string `mapstructure:"port"`
+	Retry      int    `mapstructure:"retry"`
 	Logging    logger
 	Logfile    *os.File
 	LastUpdate time.Time
@@ -118,17 +119,27 @@ func (r *repo) update() {
 		return
 	}
 
-	err = repo.Fetch(&git.FetchOptions{
-		RemoteName: r.Remote,
-		Auth:       sshAuth,
-	})
-	if err == git.NoErrAlreadyUpToDate {
-		rlog.Info("No new commits")
-		return
-	}
-	if err != nil {
-		rlog.Errorf("Failed to fetch updates: %v", err)
-		return
+	// fetches from github can be flaky, sometimes we get a blank .git/refs/remotes/[master|branch name],
+	// and complaints about broken refs, subsequent fetches should fix this!
+	// we'll fetch up to the retry amount until it succeeds!.
+
+	for i := 0; i < C.Retry; i++ {
+		rlog.Info("Fetch attempt: ", i+1)
+		err = repo.Fetch(&git.FetchOptions{
+			RemoteName: r.Remote,
+			Auth:       sshAuth,
+		})
+		if err == nil {
+			break
+		}
+		if err == git.NoErrAlreadyUpToDate {
+			rlog.Info("No new commits")
+			return
+		}
+		if err != nil {
+			rlog.Errorf("Failed to fetch updates: %v", err)
+			continue
+		}
 	}
 	rlog.Info("Fetched new updates")
 
@@ -341,8 +352,15 @@ func (c *config) setLogging() {
 	}
 }
 
+func (c *config) setRetry() {
+	if c.Retry == 0 {
+		c.Retry = 1
+	}
+}
+
 func (c *config) refreshTasks() {
 	c.setLogging()
+	c.setRetry()
 	c.validatePathsUniq()
 	c.setRepoDefaults()
 	c.LastUpdate = time.Now()
@@ -356,6 +374,7 @@ func main() {
 
 	viper.SetDefault("listen", "0.0.0.0")
 	viper.SetDefault("port", 5555)
+	viper.SetDefault("retry", 10)
 	viper.SetDefault("logging.format", "text")
 	viper.SetDefault("logging.output", "stdout")
 	viper.SetDefault("logging.level", "info")
