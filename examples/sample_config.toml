@@ -1,5 +1,6 @@
 listen = "localhost"
 port = 5555
+retry = 10
 [logging]
 format = "text"
 output = "stdout"

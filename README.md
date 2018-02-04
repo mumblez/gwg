@@ -35,6 +35,7 @@ To update multiple git repositories when changes are pushed to github WITHOUT po
 ```yaml
 listen: localhost                           # leave blank or remove to accept connections on all interfaces
 port: 5555                                  # specify a port above 1024 to run as a non root user
+retry: 10                                   # number of times to attempt a fetch, (fetches from github can be flaky sometimes)
 logging:
   format: text                              # [text|json] defaults to text or json if not recognised
   output: stdout                            # [stdout|/path/to/file] defaults to stdout
