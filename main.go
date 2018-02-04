@@ -18,7 +18,9 @@ import (
 type config struct {
 	Listen     string `mapstructure:"listen"`
 	Port       string `mapstructure:"port"`
-	Retry      int    `mapstructure:"retry"`
+	RetryCount int    `mapstructure:"retry_count"`
+	RetryDelay int    `mapstructure:"retry_delay"`
+	Initialise bool   `mapstructure:"initialise"`
 	Logging    logger
 	Logfile    *os.File
 	LastUpdate time.Time
@@ -123,7 +125,7 @@ func (r *repo) update() {
 	// and complaints about broken refs, subsequent fetches should fix this!
 	// we'll fetch up to the retry amount until it succeeds!.
 
-	for i := 0; i < C.Retry; i++ {
+	for i := 0; i < C.RetryCount; i++ {
 		rlog.Info("Fetch attempt: ", i+1)
 		err = repo.Fetch(&git.FetchOptions{
 			RemoteName: r.Remote,
@@ -138,6 +140,7 @@ func (r *repo) update() {
 		}
 		if err != nil {
 			rlog.Errorf("Failed to fetch updates: %v", err)
+			time.Sleep(time.Duration(C.RetryDelay) * time.Second)
 			continue
 		}
 	}
@@ -271,6 +274,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	switch e := event.(type) {
 	case *github.PushEvent:
 		if repo.URL == *e.Repo.SSHURL && repo.Branch == strings.TrimPrefix(*e.Ref, "refs/heads/") {
+			// TODO: amend logic as we'll initialise on startup / new repo added to config
 			if _, err := os.Stat(repo.Directory); err != nil {
 				go repo.clone()
 			} else {
@@ -352,18 +356,21 @@ func (c *config) setLogging() {
 	}
 }
 
-func (c *config) setRetry() {
-	if c.Retry == 0 {
-		c.Retry = 1
-	}
-}
-
 func (c *config) refreshTasks() {
 	c.setLogging()
-	c.setRetry()
 	c.validatePathsUniq()
 	c.setRepoDefaults()
 	c.LastUpdate = time.Now()
+
+	// TODO: initialise repos
+	if c.Initialise {
+		for _, r := range c.Repos {
+			if _, err := os.Stat(r.Directory); err != nil {
+				// TODO: throttle with semaphore in future
+				go r.clone()
+			}
+		}
+	}
 }
 
 func main() {
@@ -374,7 +381,9 @@ func main() {
 
 	viper.SetDefault("listen", "0.0.0.0")
 	viper.SetDefault("port", 5555)
-	viper.SetDefault("retry", 10)
+	viper.SetDefault("retry_delay", 10)
+	viper.SetDefault("retry_count", 1)
+	viper.SetDefault("initialise", true)
 	viper.SetDefault("logging.format", "text")
 	viper.SetDefault("logging.output", "stdout")
 	viper.SetDefault("logging.level", "info")
@@ -423,6 +432,8 @@ func main() {
 		log.Warnf("Config file changed: %v", e.Name)
 		log.Debugf("Event: %v", e.Op)
 		newC.refreshTasks()
+
+		// replace current config with new one
 		C = newC
 		log.Warn("Configuration updated")
 

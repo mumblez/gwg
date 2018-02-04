@@ -1,7 +1,9 @@
 {
     "listen": "localhost",
     "port": 5555,
-    "retry": 10,
+    "retry_count": 10,
+    "retry_delay": 1,
+    "initialise": true,
     "logging": {
         "format": "text",
         "output": "stdout",
