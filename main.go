@@ -256,6 +256,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// create separate repo var incase it changes on us (hot reloading)
+	// TODO add mutex and don't use copy
 	var repo = C.Repos[idx]
 
 	payload, err := github.ValidatePayload(r, []byte(repo.Secret))
@@ -274,12 +275,8 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	switch e := event.(type) {
 	case *github.PushEvent:
 		if repo.URL == *e.Repo.SSHURL && repo.Branch == strings.TrimPrefix(*e.Ref, "refs/heads/") {
-			// TODO: amend logic as we'll initialise on startup / new repo added to config
-			if _, err := os.Stat(repo.Directory); err != nil {
-				go repo.clone()
-			} else {
-				go repo.update()
-			}
+			// TODO: add mutex incase in the middle of an update
+			go repo.update()
 		} else {
 			log.WithFields(logrus.Fields{
 				"URL": *e.Repo.SSHURL,
