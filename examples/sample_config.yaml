@@ -12,7 +12,8 @@ repos:
   - url: git@github.com:ns/repo-1.git
     path: /gwg/repo-1
     directory: /path/to/clone/to-1
-    branch: master
+    label: master
+    labelType: branch
     remote: origin
     trigger: /path/to/trigger/file-1
     secret: superSecret-repo-1
@@ -21,7 +22,8 @@ repos:
   - url: git@github.com:ns/repo-2.git
     path: /gwga
     directory: /path/to/clone/to-2
-    branch: master
+    label: master
+    labelType: branch
     remote: origin
     trigger: /path/to/trigger/file-2
     secret: superSecret-repo-2

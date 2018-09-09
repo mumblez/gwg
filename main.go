@@ -38,7 +38,8 @@ type repo struct {
 	URL           string `mapstructure:"url"`
 	Path          string `mapstructure:"path"`
 	Directory     string `mapstructure:"directory"`
-	Branch        string `mapstructure:"branch"`
+	Label         string `mapstructure:"label"`
+	LabelType     string `mapstructure:"labelType"`
 	Remote        string `mapstructure:"remote"`
 	Secret        string `mapstructure:"secret"`
 	SSHPrivKey    string `mapstructure:"sshPrivKey"`
@@ -70,9 +71,10 @@ func cleanURL(url string) string {
 func (r *repo) clone() {
 
 	rlog := log.WithFields(logrus.Fields{
-		"repo":   r.Name(),
-		"path":   r.Path,
-		"branch": r.Branch,
+		"repo":      r.Name(),
+		"path":      r.Path,
+		"label":     r.Label,
+		"labelType": r.LabelType,
 	})
 	sshAuth, err := ssh.NewPublicKeysFromFile("git", r.SSHPrivKey, r.SSHPassPhrase)
 	if err != nil {
@@ -80,16 +82,41 @@ func (r *repo) clone() {
 		return
 	}
 
-	_, err = git.PlainClone(r.Directory, false, &git.CloneOptions{
-		URL:           r.URL,
-		ReferenceName: plumbing.ReferenceName("refs/heads/" + r.Branch),
-		SingleBranch:  true,
-		Auth:          sshAuth,
+	// do a vanilla clone and checkout relevant tag / branch
+	repo, err := git.PlainClone(r.Directory, false, &git.CloneOptions{
+		URL: r.URL,
+		//ReferenceName: plumbing.ReferenceName("refs/heads/" + r.Branch),
+		//SingleBranch: true,
+		// tag mode = AllTags
+		Auth: sshAuth,
+		Tags: git.AllTags,
 	})
 	if err != nil {
 		rlog.Errorf("Failed to clone repository: %v", err)
 		return
 	}
+
+	tree, err := repo.Worktree()
+	if err != nil {
+		rlog.Errorf("Failed to open work tree for repository: %v", err)
+		return
+	}
+
+	var ref string
+	if r.LabelType == "tag" {
+		ref = "refs/tags/" + r.Label
+	} else {
+		ref = "refs/remotes/" + r.Remote + "/" + r.Label
+	}
+
+	err = tree.Checkout(&git.CheckoutOptions{
+		Branch: plumbing.ReferenceName(ref),
+	})
+	if err != nil {
+		rlog.Errorf("Failed to checkout %s: %v", r.Label, err)
+		return
+	}
+
 	rlog.Info("Cloned repository")
 
 	r.touchTrigger()
@@ -98,10 +125,11 @@ func (r *repo) clone() {
 // essentially git fetch and git reset --hard origin/master | latest remote commit
 func (r *repo) update() {
 	rlog := log.WithFields(logrus.Fields{
-		"repo":   r.Name(),
-		"path":   r.Path,
-		"branch": r.Branch,
-		"remote": r.Remote,
+		"repo":      r.Name(),
+		"path":      r.Path,
+		"remote":    r.Remote,
+		"label":     r.Label,
+		"labelType": r.LabelType,
 	})
 	sshAuth, err := ssh.NewPublicKeysFromFile("git", r.SSHPrivKey, r.SSHPassPhrase)
 	if err != nil {
@@ -130,6 +158,8 @@ func (r *repo) update() {
 		err = repo.Fetch(&git.FetchOptions{
 			RemoteName: r.Remote,
 			Auth:       sshAuth,
+			Force:      true,
+			Tags:       git.AllTags,
 		})
 		if err == nil {
 			break
@@ -146,10 +176,17 @@ func (r *repo) update() {
 	}
 	rlog.Info("Fetched new updates")
 
+	var ref string
+	if r.LabelType == "tag" {
+		ref = "refs/tags/" + r.Label
+	} else {
+		ref = "refs/remotes/" + r.Remote + "/" + r.Label
+	}
+
 	// Get local and remote refs to compare hashes before we proceed
-	remoteRef, err := repo.Reference(plumbing.ReferenceName("refs/remotes/"+r.Remote+"/"+r.Branch), true)
+	remoteRef, err := repo.Reference(plumbing.ReferenceName(ref), true)
 	if err != nil {
-		rlog.Errorf("Failed to get remote reference for remotes/%s/%s: %v", r.Remote, r.Branch, err)
+		rlog.Errorf("Failed to get reference for %s: %v", ref, err)
 		return
 	}
 	localRef, err := repo.Reference(plumbing.ReferenceName("HEAD"), true)
@@ -163,7 +200,7 @@ func (r *repo) update() {
 		return
 	}
 
-	// git reset --hard [origin/master|hash]
+	// git reset --hard [origin/master|hash] - works for both branch and tag, we'll reset direct to the hash
 	err = w.Reset(&git.ResetOptions{Mode: git.HardReset, Commit: remoteRef.Hash()})
 	if err != nil {
 		rlog.Errorf("Failed to hard reset work tree: %v", err)
@@ -190,9 +227,10 @@ func (r *repo) update() {
 
 func (r *repo) touchTrigger() {
 	rlog := log.WithFields(logrus.Fields{
-		"repo":   r.Name(),
-		"path":   r.Path,
-		"branch": r.Branch,
+		"repo":      r.Name(),
+		"path":      r.Path,
+		"label":     r.Label,
+		"labelType": r.LabelType,
 	})
 	if r.HasTrigger() {
 		if err := os.Chtimes(r.Trigger, time.Now(), time.Now()); err != nil {
@@ -274,7 +312,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 
 	switch e := event.(type) {
 	case *github.PushEvent:
-		if repo.URL == *e.Repo.SSHURL && repo.Branch == strings.TrimPrefix(*e.Ref, "refs/heads/") {
+		if repo.URL == *e.Repo.SSHURL && (repo.Label == strings.TrimPrefix(*e.Ref, "refs/heads/") || repo.Label == strings.TrimPrefix(*e.Ref, "refs/tags/")) {
 			// TODO: add mutex incase in the middle of an update
 			go repo.update()
 		} else {
@@ -292,12 +330,27 @@ func handler(w http.ResponseWriter, r *http.Request) {
 
 func (c *config) setRepoDefaults() {
 	for i := range c.Repos {
-		if c.Repos[i].Branch == "" {
-			c.Repos[i].Branch = "master"
+		if c.Repos[i].LabelType == "" {
+			c.Repos[i].LabelType = "branch"
+		}
+		if c.Repos[i].Label == "" {
+			c.Repos[i].Label = "master"
 		}
 		if c.Repos[i].Remote == "" {
 			c.Repos[i].Remote = "origin"
 		}
+	}
+}
+
+func (c *config) validateLabelType() {
+	for i := range c.Repos {
+		// either known or blank, if blank our setRepoDefaults function will set
+		if c.Repos[i].LabelType == "branch" || c.Repos[i].LabelType == "tag" || c.Repos[i].LabelType == "" {
+			continue
+		} else {
+			log.Warnf("Unknown label type for repo: %s, defaulting to branch", c.Repos[i].Name)
+		}
+
 	}
 }
 
@@ -356,6 +409,7 @@ func (c *config) setLogging() {
 func (c *config) refreshTasks() {
 	c.setLogging()
 	c.validatePathsUniq()
+	c.validateLabelType()
 	c.setRepoDefaults()
 	c.LastUpdate = time.Now()
 

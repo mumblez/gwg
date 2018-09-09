@@ -3,7 +3,7 @@ Github Webhook Gateway - WIP...
 
 # Goal
 
-To update multiple git repositories when changes are pushed to github WITHOUT polling!
+To update multiple git repositories when changes are pushed to github WITHOUT polling, we update locally when we receive a webhook request from github!
 
 - Handling of multiple repository webhooks
     - one webhook path per repo (on same URL)
@@ -49,7 +49,8 @@ repos:
     path: /gwg/repo-1                       # the same path used to setup the webhook
     directory: /path/to/local/repo
     ### optional ###
-    branch: master                          # defaults to master
+    label: master                           # branch or tag name, defaults to master if labelType is branch
+    labelType: branch                       # either branch or tag, defaults to branch if blank or unrecognised
     remote: origin                          # defaults to origin
     trigger: /path/to/trigger/file          # the file to `touch` after a successful update
     secret: webhookPassword                 # the secret password used to setup the webhook
@@ -145,16 +146,3 @@ systemctl start # assuming you already have a configuration /etc/gwg/config.yaml
 - add cli flags and env vars
 - refactor
 
-.
-.
-.
-.
-.
-.
-.
-.
-.
-.
-.
-.
-.
