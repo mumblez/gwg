@@ -82,26 +82,6 @@ func (r *repo) clone() {
 		return
 	}
 
-	// do a vanilla clone and checkout relevant tag / branch
-	repo, err := git.PlainClone(r.Directory, false, &git.CloneOptions{
-		URL: r.URL,
-		//ReferenceName: plumbing.ReferenceName("refs/heads/" + r.Branch),
-		//SingleBranch: true,
-		// tag mode = AllTags
-		Auth: sshAuth,
-		Tags: git.AllTags,
-	})
-	if err != nil {
-		rlog.Errorf("Failed to clone repository: %v", err)
-		return
-	}
-
-	tree, err := repo.Worktree()
-	if err != nil {
-		rlog.Errorf("Failed to open work tree for repository: %v", err)
-		return
-	}
-
 	var ref string
 	if r.LabelType == "tag" {
 		ref = "refs/tags/" + r.Label
@@ -109,11 +89,14 @@ func (r *repo) clone() {
 		ref = "refs/remotes/" + r.Remote + "/" + r.Label
 	}
 
-	err = tree.Checkout(&git.CheckoutOptions{
-		Branch: plumbing.ReferenceName(ref),
+	// checkout specific branch / tag
+	_, err = git.PlainClone(r.Directory, false, &git.CloneOptions{
+		URL:           r.URL,
+		ReferenceName: plumbing.ReferenceName(ref),
+		Auth:          sshAuth,
 	})
 	if err != nil {
-		rlog.Errorf("Failed to checkout %s: %v", r.Label, err)
+		rlog.Errorf("Failed to clone repository: %v", err)
 		return
 	}
 
@@ -184,6 +167,9 @@ func (r *repo) update() {
 	}
 
 	// Get local and remote refs to compare hashes before we proceed
+	// ref of annotated tag will not match head, a real commit!!!
+	// TODO: account for annotated tag
+
 	remoteRef, err := repo.Reference(plumbing.ReferenceName(ref), true)
 	if err != nil {
 		rlog.Errorf("Failed to get reference for %s: %v", ref, err)
@@ -199,6 +185,9 @@ func (r *repo) update() {
 		rlog.Warning("Already up to date")
 		return
 	}
+	// ANNOTATED TAGS, have to detect, unwrap commit and then reset to the unpeeled commit
+	// https://github.com/src-d/go-git/issues/772
+	// https://github.com/src-d/go-git/issues/954
 
 	// git reset --hard [origin/master|hash] - works for both branch and tag, we'll reset direct to the hash
 	err = w.Reset(&git.ResetOptions{Mode: git.HardReset, Commit: remoteRef.Hash()})

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"regexp"
 
+	"golang.org/x/crypto/openpgp"
 	"gopkg.in/src-d/go-git.v4/config"
 	"gopkg.in/src-d/go-git.v4/plumbing"
 	"gopkg.in/src-d/go-git.v4/plumbing/object"
@@ -41,6 +42,8 @@ type CloneOptions struct {
 	ReferenceName plumbing.ReferenceName
 	// Fetch only ReferenceName if true.
 	SingleBranch bool
+	// No checkout of HEAD after clone if true.
+	NoCheckout bool
 	// Limit fetching to the specified number of commits.
 	Depth int
 	// RecurseSubmodules after the clone is created, initialize all submodules
@@ -305,12 +308,27 @@ func (o *ResetOptions) Validate(r *Repository) error {
 	return nil
 }
 
+type LogOrder int8
+
+const (
+	LogOrderDefault LogOrder = iota
+	LogOrderDFS
+	LogOrderDFSPost
+	LogOrderBSF
+	LogOrderCommitterTime
+)
+
 // LogOptions describes how a log action should be performed.
 type LogOptions struct {
 	// When the From option is set the log will only contain commits
 	// reachable from it. If this option is not set, HEAD will be used as
 	// the default From.
 	From plumbing.Hash
+
+	// The default traversal algorithm is Depth-first search
+	// set Order=LogOrderCommitterTime for ordering by committer time (more compatible with `git log`)
+	// set Order=LogOrderBSF for Breadth-first search
+	Order LogOrder
 }
 
 var (
@@ -330,6 +348,9 @@ type CommitOptions struct {
 	// Parents are the parents commits for the new commit, by default when
 	// len(Parents) is zero, the hash of HEAD reference is used.
 	Parents []plumbing.Hash
+	// A key to sign the commit with. A nil value here means the commit will not
+	// be signed. The private key must be present and already decrypted.
+	SignKey *openpgp.Entity
 }
 
 // Validate validates the fields and sets the default values.
@@ -403,3 +424,14 @@ func (o *GrepOptions) Validate(w *Worktree) error {
 
 	return nil
 }
+
+// PlainOpenOptions describes how opening a plain repository should be
+// performed.
+type PlainOpenOptions struct {
+	// DetectDotGit defines whether parent directories should be
+	// walked until a .git directory or file is found.
+	DetectDotGit bool
+}
+
+// Validate validates the fields and sets the default values.
+func (o *PlainOpenOptions) Validate() error { return nil }
