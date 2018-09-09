@@ -145,3 +145,4 @@ systemctl start # assuming you already have a configuration /etc/gwg/config.yaml
 - add cli flags and env vars
 - refactor
 
+.
