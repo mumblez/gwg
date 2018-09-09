@@ -1,5 +1,5 @@
 # gwg
-Github Webhook Gateway - WIP..
+Github Webhook Gateway - WIP...
 
 # Goal
 
