@@ -170,11 +170,23 @@ func (r *repo) update() {
 	// ref of annotated tag will not match head, a real commit!!!
 	// TODO: account for annotated tag
 
+	var commitHash plumbing.Hash
 	remoteRef, err := repo.Reference(plumbing.ReferenceName(ref), true)
 	if err != nil {
 		rlog.Errorf("Failed to get reference for %s: %v", ref, err)
 		return
 	}
+
+	commitHash = remoteRef.Hash()
+
+	// test if annotated tag
+	atag, err := repo.TagObject(remoteRef.Hash())
+	if err == nil {
+		rlog.Infof("Annotated tag hash: %v", atag.Hash)
+		rlog.Infof("Annotated tag target hash: %v", atag.Target)
+		commitHash = atag.Target
+	}
+
 	localRef, err := repo.Reference(plumbing.ReferenceName("HEAD"), true)
 	if err != nil {
 		rlog.Errorf("Failed to get local reference for HEAD: %v", err)
@@ -190,7 +202,7 @@ func (r *repo) update() {
 	// https://github.com/src-d/go-git/issues/954
 
 	// git reset --hard [origin/master|hash] - works for both branch and tag, we'll reset direct to the hash
-	err = w.Reset(&git.ResetOptions{Mode: git.HardReset, Commit: remoteRef.Hash()})
+	err = w.Reset(&git.ResetOptions{Mode: git.HardReset, Commit: commitHash})
 	if err != nil {
 		rlog.Errorf("Failed to hard reset work tree: %v", err)
 		return
@@ -202,11 +214,11 @@ func (r *repo) update() {
 		return
 	}
 
-	if headRef.Hash() == remoteRef.Hash() {
+	if headRef.Hash() == commitHash {
 		rlog.Infof("Changes confirmed, latest hash: %v", headRef.Hash())
 	} else {
 		rlog.Error("Something went wrong, hashes don't match!")
-		rlog.Debugf("Remote hash: %v", remoteRef.Hash())
+		rlog.Debugf("Remote hash: %v", commitHash)
 		rlog.Debugf("Local hash:  %v", headRef.Hash())
 		return
 	}
