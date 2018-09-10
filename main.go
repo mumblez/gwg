@@ -89,12 +89,15 @@ func (r *repo) clone() {
 		ref = "refs/remotes/" + r.Remote + "/" + r.Label
 	}
 
+	rlog.Debugf("Clone reference: %v", ref)
+
 	// checkout specific branch / tag
 	_, err = git.PlainClone(r.Directory, false, &git.CloneOptions{
 		URL:           r.URL,
 		ReferenceName: plumbing.ReferenceName(ref),
 		Auth:          sshAuth,
 	})
+
 	if err != nil {
 		rlog.Errorf("Failed to clone repository: %v", err)
 		return
