@@ -86,7 +86,6 @@ func (r *repo) clone() {
 	if r.LabelType == "tag" {
 		ref = "refs/tags/" + r.Label
 	} else {
-		//ref = "refs/remotes/" + r.Remote + "/" + r.Label
 		ref = "refs/heads/" + r.Label
 	}
 
@@ -411,7 +410,6 @@ func (c *config) refreshTasks() {
 	c.setRepoDefaults()
 	c.LastUpdate = time.Now()
 
-	// TODO: initialise repos
 	if c.Initialise {
 		for _, r := range c.Repos {
 			if _, err := os.Stat(r.Directory); err != nil {
@@ -451,21 +449,7 @@ func main() {
 	viper.WatchConfig()
 	// event fired twice on linux but once on mac? wtf!!!
 	viper.OnConfigChange(func(e fsnotify.Event) {
-		// log.Infof("op: %+v", e.Op)
-		// fires off CREATE and WRITE on linux
-		// fires off CREATE on mac
-		// both using vim, both creates swp files by default, hmmmm
-		// ignore WRITE, but we won't catch changes if things are echo'd directly into file!
-		// normal use case will be to open and edit file, so we'll ignore WRITE events for now
-		// if e.Op != fsnotify.Create {
-		// 	return
-		// }
-
-		// alt method
-		// seems to work well, we can tweak the timing but quarter second seems ideal
-		// 1 second = 1000917642 nanoseconds
-		// quarter second = 250229410
-		// if time now is less then quarter second of last update, return
+		// ensure we don't trigger multiple updates for when multiple events occur
 		if time.Since(C.LastUpdate).Nanoseconds() < 250229410 {
 			return
 		}
