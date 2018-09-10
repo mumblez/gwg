@@ -50,7 +50,7 @@ repos:
     directory: /path/to/local/repo
     ### optional ###
     label: master                           # branch or tag name, defaults to master if labelType is branch
-    labelType: branch                       # either branch or tag, defaults to branch if blank or unrecognised
+    labelType: branch                       # [branch|tag] defaults to branch if blank or unrecognised
     remote: origin                          # defaults to origin
     trigger: /path/to/trigger/file          # the file to `touch` after a successful update
     secret: webhookPassword                 # the secret password used to setup the webhook
@@ -83,6 +83,8 @@ Choose the format of your choice, yaml, json or toml.
     - ensure only gwg user can read config file
 - start server as newly created user!, if you have a systemd system, see the gwg.service sample file and instructions below
 
+As we don't support tls / ssl, it's advisable to host this behind an SSL terminated load balancer / server!
+
 # Notes
 
 ## Hot Reloading
@@ -95,7 +97,7 @@ If the repository already exists, it will be updated, equivalent to:
 
 ```sh
 git fetch origin
-git reset --hard $LATEST_REMOTE_COMMIT_ON_SPECIFIC_BRANCH
+git reset --hard $LATEST_REMOTE_COMMIT_ON_SPECIFIC_BRANCH_or_TAG
 ```
 This means we will always trust the remote over our local repository, it also means we avoid any potential merge conflicts as we do a hard reset!
 
@@ -133,11 +135,8 @@ Save as `/etc/systemd/system/gwg.service`
 ```sh
 systemctl daemon-reload
 systemctl enable gwg
-systemctl start # assuming you already have a configuration /etc/gwg/config.yaml
+systemctl start # assuming you already have a configuration /etc/gwg/config.[toml|json|yaml]
 ```
-
-
-
 # TODO
 - gc / prune deleted repos?
 - add mutexes around updates and reloads?
@@ -145,14 +144,3 @@ systemctl start # assuming you already have a configuration /etc/gwg/config.yaml
 - add slack notifications on errors
 - add cli flags and env vars
 - refactor
-
-.
-.
-.
-.
-.
-.
-.
-.
-.
-.
