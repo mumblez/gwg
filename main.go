@@ -86,7 +86,8 @@ func (r *repo) clone() {
 	if r.LabelType == "tag" {
 		ref = "refs/tags/" + r.Label
 	} else {
-		ref = "refs/remotes/" + r.Remote + "/" + r.Label
+		//ref = "refs/remotes/" + r.Remote + "/" + r.Label
+		ref = "refs/heads/" + r.Label
 	}
 
 	rlog.Debugf("Clone reference: %v", ref)
@@ -169,10 +170,6 @@ func (r *repo) update() {
 		ref = "refs/remotes/" + r.Remote + "/" + r.Label
 	}
 
-	// Get local and remote refs to compare hashes before we proceed
-	// ref of annotated tag will not match head, a real commit!!!
-	// TODO: account for annotated tag
-
 	var commitHash plumbing.Hash
 	remoteRef, err := repo.Reference(plumbing.ReferenceName(ref), true)
 	if err != nil {
@@ -200,9 +197,6 @@ func (r *repo) update() {
 		rlog.Warning("Already up to date")
 		return
 	}
-	// ANNOTATED TAGS, have to detect, unwrap commit and then reset to the unpeeled commit
-	// https://github.com/src-d/go-git/issues/772
-	// https://github.com/src-d/go-git/issues/954
 
 	// git reset --hard [origin/master|hash] - works for both branch and tag, we'll reset direct to the hash
 	err = w.Reset(&git.ResetOptions{Mode: git.HardReset, Commit: commitHash})
