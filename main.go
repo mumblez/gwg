@@ -412,8 +412,8 @@ func (c *config) refreshTasks() {
 	if c.Initialise {
 		for _, r := range c.Repos {
 			if _, err := os.Stat(r.Directory); err != nil {
-				// TODO: throttle with semaphore in future
-				go r.clone()
+				// we'll do one at a time to avoid intermittent race conditions
+				r.clone()
 			}
 		}
 	}
