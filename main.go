@@ -178,9 +178,8 @@ func (r *repo) update() {
 
 	commitHash = remoteRef.Hash()
 
-	// test if annotated tag
-	atag, err := repo.TagObject(remoteRef.Hash())
-	if err == nil {
+	// test if annotated tag and overwrite commitHash
+	if atag, err := repo.TagObject(remoteRef.Hash()); err == nil {
 		rlog.Infof("Annotated tag hash: %v", atag.Hash)
 		rlog.Infof("Annotated tag target hash: %v", atag.Target)
 		commitHash = atag.Target
