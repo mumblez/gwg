@@ -51,13 +51,13 @@ type repo struct {
 }
 
 type job struct {
-	repo    repo
+	repo    *repo
 	jobType string
 }
 
-// A way to pass extra arguments into http.HandleFunc
+// DataPasser - A way to pass extra arguments into http.HandleFunc
 type DataPasser struct {
-	jobs    chan job
+	jobs    chan *job
 	threads int
 }
 
@@ -184,20 +184,20 @@ func (r *repo) update() {
 		ref = "refs/remotes/" + r.Remote + "/" + r.Label
 	}
 
-	var commitHash plumbing.Hash
+	var targetHash plumbing.Hash
 	remoteRef, err := repo.Reference(plumbing.ReferenceName(ref), true)
 	if err != nil {
 		rlog.Errorf("Failed to get reference for %s: %v", ref, err)
 		return
 	}
 
-	commitHash = remoteRef.Hash()
+	targetHash = remoteRef.Hash()
 
-	// test if annotated tag and overwrite commitHash
+	// test if annotated tag and amend targetHash
 	if atag, err := repo.TagObject(remoteRef.Hash()); err == nil {
 		rlog.Infof("Annotated tag hash: %v", atag.Hash)
 		rlog.Infof("Annotated tag target hash: %v", atag.Target)
-		commitHash = atag.Target
+		targetHash = atag.Target
 	}
 
 	localRef, err := repo.Reference(plumbing.ReferenceName("HEAD"), true)
@@ -212,7 +212,7 @@ func (r *repo) update() {
 	}
 
 	// git reset --hard [origin/master|hash] - works for both branch and tag, we'll reset direct to the hash
-	err = w.Reset(&git.ResetOptions{Mode: git.HardReset, Commit: commitHash})
+	err = w.Reset(&git.ResetOptions{Mode: git.HardReset, Commit: targetHash})
 	if err != nil {
 		rlog.Errorf("Failed to hard reset work tree: %v", err)
 		return
@@ -224,11 +224,11 @@ func (r *repo) update() {
 		return
 	}
 
-	if headRef.Hash() == commitHash {
+	if headRef.Hash() == targetHash {
 		rlog.Infof("Changes confirmed, latest hash: %v", headRef.Hash())
 	} else {
 		rlog.Error("Something went wrong, hashes don't match!")
-		rlog.Debugf("Remote hash: %v", commitHash)
+		rlog.Debugf("Remote hash: %v", targetHash)
 		rlog.Debugf("Local hash:  %v", headRef.Hash())
 		return
 	}
@@ -297,7 +297,7 @@ func (r *repo) HasSecret() bool {
 	return true
 }
 
-func process(jobs chan job, threads int) {
+func process(jobs chan *job, threads int) {
 	sem := make(chan struct{}, threads)
 	for {
 		select {
@@ -344,7 +344,7 @@ func (p *DataPasser) handleFunc(w http.ResponseWriter, r *http.Request) {
 	switch e := event.(type) {
 	case *github.PushEvent:
 		if repo.URL == *e.Repo.SSHURL && (repo.Label == strings.TrimPrefix(*e.Ref, "refs/heads/") || repo.Label == strings.TrimPrefix(*e.Ref, "refs/tags/")) {
-			p.jobs <- job{repo: repo, jobType: "update"}
+			p.jobs <- &job{repo: &repo, jobType: "update"}
 		} else {
 			log.WithFields(logrus.Fields{
 				"URL": *e.Repo.SSHURL,
@@ -445,8 +445,9 @@ func (c *config) refreshTasks() {
 
 	if c.Initialise {
 		for _, r := range c.Repos {
+			repo := r
 			if _, err := os.Stat(r.Directory); err != nil {
-				c.DataPasser.jobs <- job{repo: r, jobType: "clone"}
+				c.DataPasser.jobs <- &job{repo: &repo, jobType: "clone"}
 			}
 		}
 	}
@@ -476,6 +477,13 @@ func main() {
 		log.Fatalf("Failed to setup configuration: %v", err)
 	}
 
+	passer := &DataPasser{
+		jobs:    make(chan *job, 100),
+		threads: C.Threads,
+	}
+
+	C.DataPasser = passer
+
 	C.refreshTasks()
 
 	viper.WatchConfig()
@@ -497,6 +505,7 @@ func main() {
 
 		log.Warnf("Config file changed: %v", e.Name)
 		log.Debugf("Event: %v", e.Op)
+		newC.DataPasser = passer
 		newC.refreshTasks()
 
 		// replace current config with new one
@@ -504,11 +513,6 @@ func main() {
 		mutex.Unlock()
 		log.Warn("Configuration updated")
 	})
-
-	passer := &DataPasser{
-		jobs:    make(chan job, 100),
-		threads: C.Threads,
-	}
 
 	go process(passer.jobs, passer.threads)
 
