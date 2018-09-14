@@ -413,7 +413,9 @@ func (c *config) refreshTasks() {
 		for _, r := range c.Repos {
 			if _, err := os.Stat(r.Directory); err != nil {
 				// we'll do one at a time to avoid intermittent race conditions
+				// go func(r *repo) {
 				r.clone()
+				// }(*r)
 			}
 		}
 	}
