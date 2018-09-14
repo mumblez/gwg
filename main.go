@@ -22,10 +22,12 @@ type config struct {
 	RetryCount int    `mapstructure:"retry_count"`
 	RetryDelay int    `mapstructure:"retry_delay"`
 	Initialise bool   `mapstructure:"initialise"`
+	Threads    int    `mapstructure:"threads"`
 	Logging    logger
 	Logfile    *os.File
 	LastUpdate time.Time
 	Repos      []repo
+	DataPasser *DataPasser
 }
 
 type logger struct {
@@ -46,6 +48,17 @@ type repo struct {
 	SSHPrivKey    string `mapstructure:"sshPrivKey"`
 	SSHPassPhrase string `mapstructure:"sshPassPhrase"`
 	Trigger       string `mapstructure:"trigger"`
+}
+
+type job struct {
+	repo    repo
+	jobType string
+}
+
+// A way to pass extra arguments into http.HandleFunc
+type DataPasser struct {
+	jobs    chan job
+	threads int
 }
 
 // C is global config
@@ -284,7 +297,28 @@ func (r *repo) HasSecret() bool {
 	return true
 }
 
-func handler(w http.ResponseWriter, r *http.Request) {
+func process(jobs chan job, threads int) {
+	sem := make(chan struct{}, threads)
+	for {
+		select {
+		case j := <-jobs:
+			go func() {
+				sem <- struct{}{}
+				switch j.jobType {
+				case "clone":
+					j.repo.clone()
+				case "update":
+					j.repo.update()
+				}
+				<-sem
+			}()
+		}
+	}
+
+}
+
+func (p *DataPasser) handleFunc(w http.ResponseWriter, r *http.Request) {
+	//func handler(w http.ResponseWriter, r *http.Request) {
 	mutex.Lock()
 	idx, ok := C.FindRepo(r.URL.Path)
 	if !ok {
@@ -310,7 +344,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	switch e := event.(type) {
 	case *github.PushEvent:
 		if repo.URL == *e.Repo.SSHURL && (repo.Label == strings.TrimPrefix(*e.Ref, "refs/heads/") || repo.Label == strings.TrimPrefix(*e.Ref, "refs/tags/")) {
-			go repo.update()
+			p.jobs <- job{repo: repo, jobType: "update"}
 		} else {
 			log.WithFields(logrus.Fields{
 				"URL": *e.Repo.SSHURL,
@@ -412,10 +446,7 @@ func (c *config) refreshTasks() {
 	if c.Initialise {
 		for _, r := range c.Repos {
 			if _, err := os.Stat(r.Directory); err != nil {
-				// we'll do one at a time to avoid intermittent race conditions
-				// go func(r *repo) {
-				r.clone()
-				// }(*r)
+				c.DataPasser.jobs <- job{repo: r, jobType: "clone"}
 			}
 		}
 	}
@@ -431,6 +462,7 @@ func main() {
 	viper.SetDefault("port", 5555)
 	viper.SetDefault("retry_delay", 10)
 	viper.SetDefault("retry_count", 1)
+	viper.SetDefault("threads", 5)
 	viper.SetDefault("initialise", true)
 	viper.SetDefault("logging.format", "text")
 	viper.SetDefault("logging.output", "stdout")
@@ -473,9 +505,17 @@ func main() {
 		log.Warn("Configuration updated")
 	})
 
+	passer := &DataPasser{
+		jobs:    make(chan job, 100),
+		threads: C.Threads,
+	}
+
+	go process(passer.jobs, passer.threads)
+
 	// Start the server.
 	// (listen and port changes require a restart)
-	http.HandleFunc("/", handler)
+	//http.HandleFunc("/", handler)
+	http.HandleFunc("/", passer.handleFunc)
 	http.ListenAndServe(C.Listen+":"+C.Port, nil)
 
 }
