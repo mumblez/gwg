@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -49,6 +50,7 @@ type repo struct {
 
 // C is global config
 var C config
+var mutex sync.Mutex
 var log = logrus.New()
 
 func (c *config) FindRepo(path string) (int, bool) {
@@ -283,15 +285,14 @@ func (r *repo) HasSecret() bool {
 }
 
 func handler(w http.ResponseWriter, r *http.Request) {
+	mutex.Lock()
 	idx, ok := C.FindRepo(r.URL.Path)
 	if !ok {
 		log.Warnf("Repository not found for path: %v", r.URL.Path)
 		return
 	}
-
-	// create separate repo var incase it changes on us (hot reloading)
-	// TODO add mutex and don't use copy
 	var repo = C.Repos[idx]
+	mutex.Unlock()
 
 	payload, err := github.ValidatePayload(r, []byte(repo.Secret))
 	defer r.Body.Close()
@@ -309,7 +310,6 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	switch e := event.(type) {
 	case *github.PushEvent:
 		if repo.URL == *e.Repo.SSHURL && (repo.Label == strings.TrimPrefix(*e.Ref, "refs/heads/") || repo.Label == strings.TrimPrefix(*e.Ref, "refs/tags/")) {
-			// TODO: add mutex incase in the middle of an update
 			go repo.update()
 		} else {
 			log.WithFields(logrus.Fields{
@@ -446,11 +446,11 @@ func main() {
 
 	C.refreshTasks()
 
-	// hot reloading can be improved, (adding mutexes might be overkill for now)
 	viper.WatchConfig()
 	// event fired twice on linux but once on mac? wtf!!!
 	viper.OnConfigChange(func(e fsnotify.Event) {
 		// ensure we don't trigger multiple updates for when multiple events occur
+		mutex.Lock()
 		if time.Since(C.LastUpdate).Nanoseconds() < 250229410 {
 			return
 		}
@@ -469,8 +469,8 @@ func main() {
 
 		// replace current config with new one
 		C = newC
+		mutex.Unlock()
 		log.Warn("Configuration updated")
-
 	})
 
 	// Start the server.
