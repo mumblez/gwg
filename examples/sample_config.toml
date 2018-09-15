@@ -2,6 +2,7 @@ listen = "localhost"
 port = 5555
 retry_count = 10
 retry_delay = 1
+threads = 5
 initialise = true
 [logging]
 format = "text"

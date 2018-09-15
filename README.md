@@ -36,7 +36,8 @@ To update multiple git repositories when changes are pushed to github WITHOUT po
 listen: localhost                           # leave blank or remove to accept connections on all interfaces
 port: 5555                                  # specify a port above 1024 to run as a non root user
 retry_count: 10                             # number of times to attempt a fetch, (fetches from github can be flaky sometimes)
-retry_delay: 1                              # delay between retries
+retry_delay: 1                              # delay between retries (in seconds)
+threads: 5                                  # max number of concurrent clone / update operations, defaults to 5
 initialise: true                            # clone the repositories if they don't exist locally (on startup and when new repo's added to config (hot-reload))
 logging:
   format: text                              # [text|json] defaults to text or json if not recognised
@@ -88,7 +89,7 @@ As we don't support tls / ssl, it's advisable to host this behind an SSL termina
 # Notes
 
 ## Hot Reloading
-The configuration file can be editted and it will be hot-reloaded, the only exception is if you need you update the `listen` and `port` fields as they will require a restart!
+The configuration file can be editted and it will be hot-reloaded, the only exception is if you need you update the `listen`, `port` and `threads` fields as they will require a restart!
 
 ## Update method
 If the repository does not exist locally it will be cloned
@@ -112,6 +113,9 @@ logging:
   ...
 ```
 systemd will capture stdout and will also add a timestamp so best to set to `false`.
+
+## Concurrency
+Default is set to 5 threads so that means 5 concurrent clones / updates, diminishing returns if you set too high, you are bound by storage write speed and network bandwidth!
 
 ## basic systemd service config
 ```
@@ -139,7 +143,6 @@ systemctl start # assuming you already have a configuration /etc/gwg/config.[tom
 ```
 # TODO
 - gc / prune deleted repos?
-- add mutexes around updates and reloads?
 - add raw shell exec after update?
 - add slack notifications on errors
 - add cli flags and env vars

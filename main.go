@@ -3,7 +3,10 @@ package main
 import (
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -21,10 +24,12 @@ type config struct {
 	RetryCount int    `mapstructure:"retry_count"`
 	RetryDelay int    `mapstructure:"retry_delay"`
 	Initialise bool   `mapstructure:"initialise"`
+	Threads    int    `mapstructure:"threads"`
 	Logging    logger
 	Logfile    *os.File
 	LastUpdate time.Time
 	Repos      []repo
+	DataPasser *DataPasser
 }
 
 type logger struct {
@@ -45,10 +50,23 @@ type repo struct {
 	SSHPrivKey    string `mapstructure:"sshPrivKey"`
 	SSHPassPhrase string `mapstructure:"sshPassPhrase"`
 	Trigger       string `mapstructure:"trigger"`
+	Busy          bool   // when clone / update
+}
+
+type job struct {
+	repo    *repo
+	jobType string
+}
+
+// DataPasser - A way to pass extra arguments into http.HandleFunc
+type DataPasser struct {
+	jobs    chan *job
+	threads int
 }
 
 // C is global config
 var C config
+var mutex sync.Mutex
 var log = logrus.New()
 
 func (c *config) FindRepo(path string) (int, bool) {
@@ -68,14 +86,39 @@ func cleanURL(url string) string {
 	return url
 }
 
-func (r *repo) clone() {
+func (r *repo) finished() {
+	r.Busy = false
+}
 
+func (r *repo) waitForCompletion() {
 	rlog := log.WithFields(logrus.Fields{
 		"repo":      r.Name(),
 		"path":      r.Path,
 		"label":     r.Label,
 		"labelType": r.LabelType,
 	})
+	// check if update already in progress and let it finish
+	for {
+		if r.Busy {
+			rlog.Warnln("Repo is in the middle of an update, waiting...")
+			time.Sleep(3 * time.Second)
+		} else {
+			break
+		}
+	}
+}
+
+func (r *repo) clone() {
+	defer r.finished()
+	rlog := log.WithFields(logrus.Fields{
+		"repo":      r.Name(),
+		"path":      r.Path,
+		"label":     r.Label,
+		"labelType": r.LabelType,
+	})
+
+	r.waitForCompletion()
+	r.Busy = true
 	sshAuth, err := ssh.NewPublicKeysFromFile("git", r.SSHPrivKey, r.SSHPassPhrase)
 	if err != nil {
 		rlog.Errorf("Failed to setup ssh auth: %v", err)
@@ -110,6 +153,7 @@ func (r *repo) clone() {
 
 // essentially git fetch and git reset --hard origin/master | latest remote commit
 func (r *repo) update() {
+	defer r.finished()
 	rlog := log.WithFields(logrus.Fields{
 		"repo":      r.Name(),
 		"path":      r.Path,
@@ -117,6 +161,9 @@ func (r *repo) update() {
 		"label":     r.Label,
 		"labelType": r.LabelType,
 	})
+
+	r.waitForCompletion()
+	r.Busy = true
 	sshAuth, err := ssh.NewPublicKeysFromFile("git", r.SSHPrivKey, r.SSHPassPhrase)
 	if err != nil {
 		rlog.Errorf("Failed to setup ssh auth: %v", err)
@@ -169,20 +216,20 @@ func (r *repo) update() {
 		ref = "refs/remotes/" + r.Remote + "/" + r.Label
 	}
 
-	var commitHash plumbing.Hash
+	var targetHash plumbing.Hash
 	remoteRef, err := repo.Reference(plumbing.ReferenceName(ref), true)
 	if err != nil {
 		rlog.Errorf("Failed to get reference for %s: %v", ref, err)
 		return
 	}
 
-	commitHash = remoteRef.Hash()
+	targetHash = remoteRef.Hash()
 
-	// test if annotated tag and overwrite commitHash
+	// test if annotated tag and amend targetHash
 	if atag, err := repo.TagObject(remoteRef.Hash()); err == nil {
 		rlog.Infof("Annotated tag hash: %v", atag.Hash)
 		rlog.Infof("Annotated tag target hash: %v", atag.Target)
-		commitHash = atag.Target
+		targetHash = atag.Target
 	}
 
 	localRef, err := repo.Reference(plumbing.ReferenceName("HEAD"), true)
@@ -197,7 +244,7 @@ func (r *repo) update() {
 	}
 
 	// git reset --hard [origin/master|hash] - works for both branch and tag, we'll reset direct to the hash
-	err = w.Reset(&git.ResetOptions{Mode: git.HardReset, Commit: commitHash})
+	err = w.Reset(&git.ResetOptions{Mode: git.HardReset, Commit: targetHash})
 	if err != nil {
 		rlog.Errorf("Failed to hard reset work tree: %v", err)
 		return
@@ -209,11 +256,11 @@ func (r *repo) update() {
 		return
 	}
 
-	if headRef.Hash() == commitHash {
+	if headRef.Hash() == targetHash {
 		rlog.Infof("Changes confirmed, latest hash: %v", headRef.Hash())
 	} else {
 		rlog.Error("Something went wrong, hashes don't match!")
-		rlog.Debugf("Remote hash: %v", commitHash)
+		rlog.Debugf("Remote hash: %v", targetHash)
 		rlog.Debugf("Local hash:  %v", headRef.Hash())
 		return
 	}
@@ -282,18 +329,35 @@ func (r *repo) HasSecret() bool {
 	return true
 }
 
-func handler(w http.ResponseWriter, r *http.Request) {
+func process(jobs chan *job, threads int) {
+	sem := make(chan struct{}, threads)
+	for {
+		select {
+		case j := <-jobs:
+			go func() {
+				sem <- struct{}{}
+				switch j.jobType {
+				case "clone":
+					j.repo.clone()
+				case "update":
+					j.repo.update()
+				}
+				<-sem
+			}()
+		}
+	}
+
+}
+
+func (p *DataPasser) handleFunc(w http.ResponseWriter, r *http.Request) {
+	//func handler(w http.ResponseWriter, r *http.Request) {
 	idx, ok := C.FindRepo(r.URL.Path)
 	if !ok {
 		log.Warnf("Repository not found for path: %v", r.URL.Path)
 		return
 	}
 
-	// create separate repo var incase it changes on us (hot reloading)
-	// TODO add mutex and don't use copy
-	var repo = C.Repos[idx]
-
-	payload, err := github.ValidatePayload(r, []byte(repo.Secret))
+	payload, err := github.ValidatePayload(r, []byte(C.Repos[idx].Secret))
 	defer r.Body.Close()
 	if err != nil {
 		log.Errorf("Error validating request body: %v", err)
@@ -308,9 +372,8 @@ func handler(w http.ResponseWriter, r *http.Request) {
 
 	switch e := event.(type) {
 	case *github.PushEvent:
-		if repo.URL == *e.Repo.SSHURL && (repo.Label == strings.TrimPrefix(*e.Ref, "refs/heads/") || repo.Label == strings.TrimPrefix(*e.Ref, "refs/tags/")) {
-			// TODO: add mutex incase in the middle of an update
-			go repo.update()
+		if C.Repos[idx].URL == *e.Repo.SSHURL && (C.Repos[idx].Label == strings.TrimPrefix(*e.Ref, "refs/heads/") || C.Repos[idx].Label == strings.TrimPrefix(*e.Ref, "refs/tags/")) {
+			p.jobs <- &job{repo: &C.Repos[idx], jobType: "update"}
 		} else {
 			log.WithFields(logrus.Fields{
 				"URL": *e.Repo.SSHURL,
@@ -407,16 +470,20 @@ func (c *config) refreshTasks() {
 	c.validatePathsUniq()
 	c.validateLabelType()
 	c.setRepoDefaults()
+	// TODO: respawn process()
+	c.DataPasser.threads = c.Threads
 	c.LastUpdate = time.Now()
+}
 
+func (c *config) initialClone() {
 	if c.Initialise {
-		for _, r := range c.Repos {
+		for idx, r := range c.Repos {
 			if _, err := os.Stat(r.Directory); err != nil {
-				// we'll do one at a time to avoid intermittent race conditions
-				r.clone()
+				c.DataPasser.jobs <- &job{repo: &c.Repos[idx], jobType: "clone"}
 			}
 		}
 	}
+
 }
 
 func main() {
@@ -429,6 +496,7 @@ func main() {
 	viper.SetDefault("port", 5555)
 	viper.SetDefault("retry_delay", 10)
 	viper.SetDefault("retry_count", 1)
+	viper.SetDefault("threads", 5)
 	viper.SetDefault("initialise", true)
 	viper.SetDefault("logging.format", "text")
 	viper.SetDefault("logging.output", "stdout")
@@ -442,13 +510,46 @@ func main() {
 		log.Fatalf("Failed to setup configuration: %v", err)
 	}
 
+	signalCh := make(chan os.Signal)
+	signal.Notify(signalCh, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-signalCh
+		var busy bool
+		log.Println("Signal received, preparing to shutting down...")
+		for {
+			// will C update on hot reload???
+			busy = false
+
+			// make a copy each loop so it gets new versions
+			repos := C.Repos
+			for _, r := range repos {
+				if r.Busy {
+					busy = true
+				}
+			}
+			if busy {
+				log.Warnln("Repo updates are still in progress (waiting to safely shutdown)...")
+				time.Sleep(5 * time.Second)
+			} else {
+				log.Println("Shutting down GWG!")
+				os.Exit(0)
+			}
+		}
+	}()
+
+	passer := &DataPasser{
+		jobs:    make(chan *job, 100),
+		threads: C.Threads,
+	}
+
+	C.DataPasser = passer
+
 	C.refreshTasks()
 
-	// hot reloading can be improved, (adding mutexes might be overkill for now)
 	viper.WatchConfig()
 	// event fired twice on linux but once on mac? wtf!!!
 	viper.OnConfigChange(func(e fsnotify.Event) {
-		// ensure we don't trigger multiple updates for when multiple events occur
+		mutex.Lock()
 		if time.Since(C.LastUpdate).Nanoseconds() < 250229410 {
 			return
 		}
@@ -463,17 +564,44 @@ func main() {
 
 		log.Warnf("Config file changed: %v", e.Name)
 		log.Debugf("Event: %v", e.Op)
+		newC.DataPasser = passer
 		newC.refreshTasks()
 
-		// replace current config with new one
-		C = newC
-		log.Warn("Configuration updated")
+		// wait until repos are finished updating / cloning
+		for {
+			// will C update on hot reload???
+			repoBusy := false
 
+			// make a copy each loop so it gets new versions
+			repos := C.Repos
+			for _, r := range repos {
+				if r.Busy {
+					repoBusy = true
+				}
+			}
+			if repoBusy {
+				log.Println("Repo updates are still in progress (waiting to safely update configuration)...")
+				time.Sleep(5 * time.Second)
+			} else {
+				log.Println("Replacing configuration...")
+				// replace current config with new one
+				C = newC
+				break
+			}
+		}
+
+		mutex.Unlock()
+		log.Warn("Configuration updated")
 	})
+
+	go process(passer.jobs, passer.threads)
+
+	C.initialClone()
 
 	// Start the server.
 	// (listen and port changes require a restart)
-	http.HandleFunc("/", handler)
+	//http.HandleFunc("/", handler)
+	http.HandleFunc("/", passer.handleFunc)
 	http.ListenAndServe(C.Listen+":"+C.Port, nil)
 
 }
