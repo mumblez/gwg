@@ -3,8 +3,10 @@ package main
 import (
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -48,6 +50,7 @@ type repo struct {
 	SSHPrivKey    string `mapstructure:"sshPrivKey"`
 	SSHPassPhrase string `mapstructure:"sshPassPhrase"`
 	Trigger       string `mapstructure:"trigger"`
+	Busy          bool   // when clone / update
 }
 
 type job struct {
@@ -83,14 +86,39 @@ func cleanURL(url string) string {
 	return url
 }
 
-func (r *repo) clone() {
+func (r *repo) finished() {
+	r.Busy = false
+}
 
+func (r *repo) waitForCompletion() {
 	rlog := log.WithFields(logrus.Fields{
 		"repo":      r.Name(),
 		"path":      r.Path,
 		"label":     r.Label,
 		"labelType": r.LabelType,
 	})
+	// check if update already in progress and let it finish
+	for {
+		if r.Busy {
+			rlog.Warnln("Repo is in the middle of an update, waiting...")
+			time.Sleep(3 * time.Second)
+		} else {
+			break
+		}
+	}
+}
+
+func (r *repo) clone() {
+	defer r.finished()
+	rlog := log.WithFields(logrus.Fields{
+		"repo":      r.Name(),
+		"path":      r.Path,
+		"label":     r.Label,
+		"labelType": r.LabelType,
+	})
+
+	r.waitForCompletion()
+	r.Busy = true
 	sshAuth, err := ssh.NewPublicKeysFromFile("git", r.SSHPrivKey, r.SSHPassPhrase)
 	if err != nil {
 		rlog.Errorf("Failed to setup ssh auth: %v", err)
@@ -125,6 +153,7 @@ func (r *repo) clone() {
 
 // essentially git fetch and git reset --hard origin/master | latest remote commit
 func (r *repo) update() {
+	defer r.finished()
 	rlog := log.WithFields(logrus.Fields{
 		"repo":      r.Name(),
 		"path":      r.Path,
@@ -132,6 +161,9 @@ func (r *repo) update() {
 		"label":     r.Label,
 		"labelType": r.LabelType,
 	})
+
+	r.waitForCompletion()
+	r.Busy = true
 	sshAuth, err := ssh.NewPublicKeysFromFile("git", r.SSHPrivKey, r.SSHPassPhrase)
 	if err != nil {
 		rlog.Errorf("Failed to setup ssh auth: %v", err)
@@ -319,16 +351,13 @@ func process(jobs chan *job, threads int) {
 
 func (p *DataPasser) handleFunc(w http.ResponseWriter, r *http.Request) {
 	//func handler(w http.ResponseWriter, r *http.Request) {
-	mutex.Lock()
 	idx, ok := C.FindRepo(r.URL.Path)
 	if !ok {
 		log.Warnf("Repository not found for path: %v", r.URL.Path)
 		return
 	}
-	var repo = C.Repos[idx]
-	mutex.Unlock()
 
-	payload, err := github.ValidatePayload(r, []byte(repo.Secret))
+	payload, err := github.ValidatePayload(r, []byte(C.Repos[idx].Secret))
 	defer r.Body.Close()
 	if err != nil {
 		log.Errorf("Error validating request body: %v", err)
@@ -343,8 +372,8 @@ func (p *DataPasser) handleFunc(w http.ResponseWriter, r *http.Request) {
 
 	switch e := event.(type) {
 	case *github.PushEvent:
-		if repo.URL == *e.Repo.SSHURL && (repo.Label == strings.TrimPrefix(*e.Ref, "refs/heads/") || repo.Label == strings.TrimPrefix(*e.Ref, "refs/tags/")) {
-			p.jobs <- &job{repo: &repo, jobType: "update"}
+		if C.Repos[idx].URL == *e.Repo.SSHURL && (C.Repos[idx].Label == strings.TrimPrefix(*e.Ref, "refs/heads/") || C.Repos[idx].Label == strings.TrimPrefix(*e.Ref, "refs/tags/")) {
+			p.jobs <- &job{repo: &C.Repos[idx], jobType: "update"}
 		} else {
 			log.WithFields(logrus.Fields{
 				"URL": *e.Repo.SSHURL,
@@ -441,16 +470,20 @@ func (c *config) refreshTasks() {
 	c.validatePathsUniq()
 	c.validateLabelType()
 	c.setRepoDefaults()
+	// TODO: respawn process()
+	c.DataPasser.threads = c.Threads
 	c.LastUpdate = time.Now()
+}
 
+func (c *config) initialClone() {
 	if c.Initialise {
-		for _, r := range c.Repos {
-			repo := r
+		for idx, r := range c.Repos {
 			if _, err := os.Stat(r.Directory); err != nil {
-				c.DataPasser.jobs <- &job{repo: &repo, jobType: "clone"}
+				c.DataPasser.jobs <- &job{repo: &c.Repos[idx], jobType: "clone"}
 			}
 		}
 	}
+
 }
 
 func main() {
@@ -477,6 +510,33 @@ func main() {
 		log.Fatalf("Failed to setup configuration: %v", err)
 	}
 
+	signalCh := make(chan os.Signal)
+	signal.Notify(signalCh, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-signalCh
+		var busy bool
+		log.Println("Signal received, preparing to shutting down...")
+		for {
+			// will C update on hot reload???
+			busy = false
+
+			// make a copy each loop so it gets new versions
+			repos := C.Repos
+			for _, r := range repos {
+				if r.Busy {
+					busy = true
+				}
+			}
+			if busy {
+				log.Warnln("Repo updates are still in progress (waiting to safely shutdown)...")
+				time.Sleep(5 * time.Second)
+			} else {
+				log.Println("Shutting down GWG!")
+				os.Exit(0)
+			}
+		}
+	}()
+
 	passer := &DataPasser{
 		jobs:    make(chan *job, 100),
 		threads: C.Threads,
@@ -489,7 +549,6 @@ func main() {
 	viper.WatchConfig()
 	// event fired twice on linux but once on mac? wtf!!!
 	viper.OnConfigChange(func(e fsnotify.Event) {
-		// ensure we don't trigger multiple updates for when multiple events occur
 		mutex.Lock()
 		if time.Since(C.LastUpdate).Nanoseconds() < 250229410 {
 			return
@@ -508,13 +567,36 @@ func main() {
 		newC.DataPasser = passer
 		newC.refreshTasks()
 
-		// replace current config with new one
-		C = newC
+		// wait until repos are finished updating / cloning
+		for {
+			// will C update on hot reload???
+			repoBusy := false
+
+			// make a copy each loop so it gets new versions
+			repos := C.Repos
+			for _, r := range repos {
+				if r.Busy {
+					repoBusy = true
+				}
+			}
+			if repoBusy {
+				log.Println("Repo updates are still in progress (waiting to safely update configuration)...")
+				time.Sleep(5 * time.Second)
+			} else {
+				log.Println("Replacing configuration...")
+				// replace current config with new one
+				C = newC
+				break
+			}
+		}
+
 		mutex.Unlock()
 		log.Warn("Configuration updated")
 	})
 
 	go process(passer.jobs, passer.threads)
+
+	C.initialClone()
 
 	// Start the server.
 	// (listen and port changes require a restart)
