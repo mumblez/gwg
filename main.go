@@ -504,7 +504,7 @@ func main() {
 	viper.SetDefault("logging.timestamp", true)
 
 	if err := viper.ReadInConfig(); err != nil {
-		log.Fatalf("Failed to read config file: %v", err)
+		log.Fatalf("Failed to read config.[toml|json|yaml] file: %v", err)
 	}
 	if err := viper.Unmarshal(&C); err != nil {
 		log.Fatalf("Failed to setup configuration: %v", err)
