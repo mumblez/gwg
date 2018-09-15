@@ -68,7 +68,7 @@ repos:
     # append more repos ...
 ```
 
-The program will search for a `config.[yaml,json,toml]` file in:
+The program will search for a `config.[yaml|json|toml]` file in:
 - `/etc/gwg`
 - `.` - current directory
 

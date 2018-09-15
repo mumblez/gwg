@@ -108,15 +108,32 @@ func (r *repo) waitForCompletion() {
 	}
 }
 
-func (r *repo) clone() {
-	defer r.finished()
-	rlog := log.WithFields(logrus.Fields{
+func (r *repo) getRefString(fetch bool) (ref string) {
+	if r.LabelType == "tag" {
+		ref = "refs/tags/" + r.Label
+	} else {
+		if fetch {
+			ref = "refs/remotes/" + r.Remote + "/" + r.Label
+		} else {
+			ref = "refs/heads/" + r.Label
+		}
+	}
+	return
+}
+
+func (r *repo) setupLogger() (logger *logrus.Entry) {
+	logger = log.WithFields(logrus.Fields{
 		"repo":      r.Name(),
 		"path":      r.Path,
 		"label":     r.Label,
 		"labelType": r.LabelType,
 	})
+	return
+}
 
+func (r *repo) clone() {
+	defer r.finished()
+	rlog := r.setupLogger()
 	r.waitForCompletion()
 	r.Busy = true
 	sshAuth, err := ssh.NewPublicKeysFromFile("git", r.SSHPrivKey, r.SSHPassPhrase)
@@ -125,12 +142,7 @@ func (r *repo) clone() {
 		return
 	}
 
-	var ref string
-	if r.LabelType == "tag" {
-		ref = "refs/tags/" + r.Label
-	} else {
-		ref = "refs/heads/" + r.Label
-	}
+	var ref = r.getRefString()
 
 	rlog.Debugf("Clone reference: %v", ref)
 
@@ -154,13 +166,7 @@ func (r *repo) clone() {
 // essentially git fetch and git reset --hard origin/master | latest remote commit
 func (r *repo) update() {
 	defer r.finished()
-	rlog := log.WithFields(logrus.Fields{
-		"repo":      r.Name(),
-		"path":      r.Path,
-		"remote":    r.Remote,
-		"label":     r.Label,
-		"labelType": r.LabelType,
-	})
+	rlog := r.setupLogger()
 
 	r.waitForCompletion()
 	r.Busy = true
@@ -209,12 +215,7 @@ func (r *repo) update() {
 	}
 	rlog.Info("Fetched new updates")
 
-	var ref string
-	if r.LabelType == "tag" {
-		ref = "refs/tags/" + r.Label
-	} else {
-		ref = "refs/remotes/" + r.Remote + "/" + r.Label
-	}
+	var ref = r.getRefString(true) // fetch = true
 
 	var targetHash plumbing.Hash
 	remoteRef, err := repo.Reference(plumbing.ReferenceName(ref), true)
@@ -260,7 +261,7 @@ func (r *repo) update() {
 		rlog.Infof("Changes confirmed, latest hash: %v", headRef.Hash())
 	} else {
 		rlog.Error("Something went wrong, hashes don't match!")
-		rlog.Debugf("Remote hash: %v", targetHash)
+		rlog.Debugf("Target hash: %v", targetHash)
 		rlog.Debugf("Local hash:  %v", headRef.Hash())
 		return
 	}
@@ -269,12 +270,8 @@ func (r *repo) update() {
 }
 
 func (r *repo) touchTrigger() {
-	rlog := log.WithFields(logrus.Fields{
-		"repo":      r.Name(),
-		"path":      r.Path,
-		"label":     r.Label,
-		"labelType": r.LabelType,
-	})
+	rlog := r.setupLogger()
+
 	if r.HasTrigger() {
 		if err := os.Chtimes(r.Trigger, time.Now(), time.Now()); err != nil {
 			rlog.Errorf("Failed to update trigger file: %v, attempting to create...", err)
@@ -329,11 +326,11 @@ func (r *repo) HasSecret() bool {
 	return true
 }
 
-func process(jobs chan *job, threads int) {
-	sem := make(chan struct{}, threads)
+func jobDispatcher(dp *DataPasser) {
+	sem := make(chan struct{}, dp.threads)
 	for {
 		select {
-		case j := <-jobs:
+		case j := <-dp.jobs:
 			go func() {
 				sem <- struct{}{}
 				switch j.jobType {
@@ -346,7 +343,6 @@ func process(jobs chan *job, threads int) {
 			}()
 		}
 	}
-
 }
 
 func (p *DataPasser) handleFunc(w http.ResponseWriter, r *http.Request) {
@@ -470,8 +466,6 @@ func (c *config) refreshTasks() {
 	c.validatePathsUniq()
 	c.validateLabelType()
 	c.setRepoDefaults()
-	// TODO: respawn process()
-	c.DataPasser.threads = c.Threads
 	c.LastUpdate = time.Now()
 }
 
@@ -546,6 +540,8 @@ func main() {
 
 	C.refreshTasks()
 
+	go jobDispatcher(passer)
+
 	viper.WatchConfig()
 	// event fired twice on linux but once on mac? wtf!!!
 	viper.OnConfigChange(func(e fsnotify.Event) {
@@ -562,7 +558,7 @@ func main() {
 			log.Fatalf("Failed to setup new configuration: %v", err)
 		}
 
-		log.Warnf("Config file changed: %v", e.Name)
+		log.Infof("Config file changed: %v", e.Name)
 		log.Debugf("Event: %v", e.Op)
 		newC.DataPasser = passer
 		newC.refreshTasks()
@@ -584,6 +580,7 @@ func main() {
 				time.Sleep(5 * time.Second)
 			} else {
 				log.Println("Replacing configuration...")
+
 				// replace current config with new one
 				C = newC
 				break
@@ -591,16 +588,13 @@ func main() {
 		}
 
 		mutex.Unlock()
-		log.Warn("Configuration updated")
+		log.Info("Configuration updated")
 	})
-
-	go process(passer.jobs, passer.threads)
 
 	C.initialClone()
 
 	// Start the server.
 	// (listen and port changes require a restart)
-	//http.HandleFunc("/", handler)
 	http.HandleFunc("/", passer.handleFunc)
 	http.ListenAndServe(C.Listen+":"+C.Port, nil)
 
