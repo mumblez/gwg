@@ -49,22 +49,23 @@ repos:
   - url: git@github.com:ns/repo-1.git
     path: /gwg/repo-1                       # the same path used to setup the webhook
     directory: /path/to/local/repo
+    secret: webhookPassword                 # the secret used to setup the webhook on github
+    sshPrivKey: /path/to/private/key        # ssh private key file
     ### optional ###
+    sshPassPhrase: sshPassPhrase-123        # leave blank or remove field if no passphrase
     label: master                           # branch or tag name, defaults to master if labelType is branch
     labelType: branch                       # [branch|tag] defaults to branch if blank or unrecognised
     remote: origin                          # defaults to origin
     trigger: /path/to/trigger/file          # the file to `touch` after a successful update
-    secret: webhookPassword                 # the secret password used to setup the webhook
-    sshPrivKey: /path/to/private/key        # leave blank or remove field if public repository
-    sshPassPhrase: sshPassPhrase-123        # leave blank or remove field if no passphrase
   - url: git@github.com:ns/repo-2.git
     path: /gwg/repo-2
     directory: /path/to/clone/to-2
-    branch: master
-    trigger: /path/to/trigger/file-2
     secret: superSecret-repo-2
     sshPrivKey: /path/to/priv/key-2
     sshPassPhrase: abc
+    label: v0.1.0
+    labelType: tag
+    trigger: /path/to/trigger/file-2
     # append more repos ...
 ```
 
@@ -79,9 +80,9 @@ Choose the format of your choice, yaml, json or toml.
 - create system user and group, e.g. for gwg - `useradd -r -b /etc -U gwg` # will set home to /etc/gwg but directory still needs to be created
 - create and secure config dir - `mkdir /etc/gwg && chown gwg:gwg /etc/gwg && chmod 770 /etc/gwg`
 - ensure user and/or group can write to repository locations, read ssh private keys and trigger files
-    - ensure trigger files exist if you want / have post update tasks
+    - trigger file will automatically be created if it doesn't exist
 - add config to `/etc/gwg`, e.g. `/etc/gwg/config.yaml` or current directory of executable
-    - ensure only gwg user can read config file
+    - ensure only gwg user can read config file (as it contains sensitive data)
 - start server as newly created user!, if you have a systemd system, see the gwg.service sample file and instructions below
 
 As we don't support tls / ssl, it's advisable to host this behind an SSL terminated load balancer / server!
@@ -146,4 +147,8 @@ systemctl start # assuming you already have a configuration /etc/gwg/config.[tom
 - add raw shell exec after update?
 - add slack notifications on errors
 - add cli flags and env vars
+- store config in a sqlite db? (so we can encrypt sensitive data)
+    - add `server` and `config` flags to explicitly run as a server and when not passed run as cli tool
+    - use gwg binary in cli mode to handle adding repo's ? (talk to server, encrypt data, check status etc...)
+- add basic web ui?
 - refactor
