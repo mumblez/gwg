@@ -142,7 +142,7 @@ func (r *repo) clone() {
 		return
 	}
 
-	var ref = r.getRefString()
+	var ref = r.getRefString(false) // clone
 
 	rlog.Debugf("Clone reference: %v", ref)
 
@@ -511,7 +511,6 @@ func main() {
 		var busy bool
 		log.Println("Signal received, preparing to shutting down...")
 		for {
-			// will C update on hot reload???
 			busy = false
 
 			// make a copy each loop so it gets new versions
@@ -519,6 +518,7 @@ func main() {
 			for _, r := range repos {
 				if r.Busy {
 					busy = true
+					break
 				}
 			}
 			if busy {
