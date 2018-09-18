@@ -378,7 +378,7 @@ func (p *DataPasser) handleFunc(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	default:
-		log.Warnf("Unknown event type %v", github.WebHookType(r))
+		log.Warnf("Unknown event type: %v", github.WebHookType(r))
 		return
 	}
 }
@@ -509,7 +509,7 @@ func main() {
 	go func() {
 		<-signalCh
 		var busy bool
-		log.Println("Signal received, preparing to shutting down...")
+		log.Println("Signal received, preparing to shutdown...")
 		for {
 			busy = false
 
@@ -525,7 +525,7 @@ func main() {
 				log.Warnln("Repo updates are still in progress (waiting to safely shutdown)...")
 				time.Sleep(5 * time.Second)
 			} else {
-				log.Println("Shutting down GWG!")
+				log.Println("Shutting down GWG, Goodbye!")
 				os.Exit(0)
 			}
 		}
@@ -565,7 +565,6 @@ func main() {
 
 		// wait until repos are finished updating / cloning
 		for {
-			// will C update on hot reload???
 			repoBusy := false
 
 			// make a copy each loop so it gets new versions
