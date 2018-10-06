@@ -152,3 +152,4 @@ systemctl start # assuming you already have a configuration /etc/gwg/config.[tom
     - use gwg binary in cli mode to handle adding repo's ? (talk to server, encrypt data, check status etc...)
 - add basic web ui?
 - refactor
+...

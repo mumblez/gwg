@@ -4,6 +4,15 @@ debug*
 config.yaml
 config.json
 config.toml
+*-trigger
+*-key
+*-key.pub
+gor*
+*config.yaml
+*config.toml
+*config.json
+Makefile
+Dockerfile
 
 
 # Binaries for programs and plugins
